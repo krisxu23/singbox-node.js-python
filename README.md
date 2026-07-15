@@ -8,8 +8,8 @@ Multi-runtime launcher for CDN edge service modules. Single-process deployment w
 
 | 环境 | 文档 | 源码 |
 | --- | --- | --- |
-| Node.js | [NODE.md](NODE.md) | [nodejs/index.js](nodejs/index.js) |
-| Python | [PYTHON.md](PYTHON.md) | [python/app.py](python/app.py) |
+| Node.js | [nodejs/NODE.md](nodejs/NODE.md) | [nodejs/index.js](nodejs/index.js) |
+| Python | [python/PYTHON.md](python/PYTHON.md) | [python/app.py](python/app.py) |
 
 ## 环境变量
 
@@ -45,14 +45,14 @@ Multi-runtime launcher for CDN edge service modules. Single-process deployment w
 ├── .github/workflows/build.yml
 ├── nodejs/
 │   ├── index.js
-│   └── package.json
+│   ├── package.json
+│   └── NODE.md
 ├── python/
 │   ├── app.py
-│   └── requirements.txt
+│   ├── requirements.txt
+│   └── PYTHON.md
 ├── index.html
 ├── license
-├── NODE.md
-├── PYTHON.md
 └── README.md
 ```
 

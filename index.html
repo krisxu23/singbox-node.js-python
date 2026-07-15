@@ -3,662 +3,245 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>云迹 | 技术博客 - 探索代码与生活的边界</title>
-    <meta name="description" content="个人技术博客，分享编程、网络技术、开发工具与日常心得。">
-    <meta name="keywords" content="技术博客,编程,网络技术,开发工具,Linux,前端开发">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <title>代码笔记 | 一个程序员的日常</title>
+    <meta name="description" content="记录编程路上的思考与积累，分享技术、工具与生活。">
     <style>
-        :root {
-            --bg: #f5f5f5;
-            --card-bg: #ffffff;
-            --text: #2c3e50;
-            --text-light: #5a6c7d;
-            --accent: #3273dc;
-            --accent-hover: #2366d1;
-            --border: #e8e8e8;
-            --shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
-            --shadow-hover: 0 8px 30px rgba(0, 0, 0, 0.10);
-            --tag-bg: #eef3fb;
-            --tag-text: #3273dc;
-            --radius: 10px;
-            --transition: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-        }
-
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif;
-            background-color: var(--bg);
-            color: var(--text);
-            line-height: 1.7;
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
+            font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif;
+            background: #f7f8fa;
+            color: #333;
+            line-height: 1.8;
         }
-
-        /* ========== 导航栏 ========== */
-        .navbar {
+        .header {
+            background: linear-gradient(135deg, #2d3436 0%, #636e72 100%);
+            color: #fff;
+            padding: 48px 0 36px;
+            text-align: center;
+        }
+        .header h1 { font-size: 2rem; font-weight: 700; letter-spacing: 1px; }
+        .header p { margin-top: 8px; opacity: .75; font-size: .95rem; }
+        .nav {
             background: #fff;
-            border-bottom: 1px solid var(--border);
+            border-bottom: 1px solid #e9ecef;
+            display: flex;
+            justify-content: center;
+            gap: 4px;
+            padding: 0 16px;
             position: sticky;
             top: 0;
-            z-index: 1000;
-            backdrop-filter: blur(12px);
-            background: rgba(255, 255, 255, 0.92);
-            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+            z-index: 100;
         }
-        .nav-inner {
-            max-width: 1100px;
-            margin: 0 auto;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 0 24px;
-            height: 56px;
-        }
-        .nav-logo {
-            font-size: 1.35rem;
-            font-weight: 700;
-            color: var(--text);
+        .nav a {
             text-decoration: none;
-            letter-spacing: -0.5px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
+            color: #555;
+            padding: 12px 20px;
+            font-size: .9rem;
+            border-bottom: 2px solid transparent;
+            transition: .2s;
         }
-        .nav-logo i {
-            color: var(--accent);
-            font-size: 1.3rem;
-        }
-        .nav-links {
-            display: flex;
-            list-style: none;
-            gap: 6px;
-            align-items: center;
-        }
-        .nav-links a {
-            text-decoration: none;
-            color: var(--text-light);
-            padding: 8px 16px;
-            border-radius: 20px;
-            font-size: 0.9rem;
-            font-weight: 500;
-            transition: var(--transition);
-            white-space: nowrap;
-        }
-        .nav-links a:hover,
-        .nav-links a.active {
-            color: var(--accent);
-            background: var(--tag-bg);
-        }
-        .nav-toggle {
-            display: none;
-            background: none;
-            border: none;
-            font-size: 1.5rem;
-            cursor: pointer;
-            color: var(--text);
-            padding: 6px;
-        }
-
-        /* ========== 主布局 ========== */
-        .main-wrapper {
-            max-width: 1100px;
-            margin: 0 auto;
-            padding: 28px 24px;
-            display: grid;
-            grid-template-columns: 1fr 320px;
-            gap: 28px;
-            flex: 1;
-        }
-
-        /* ========== 文章列表 ========== */
-        .content-area {}
-        .section-title {
-            font-size: 1.2rem;
-            font-weight: 700;
+        .nav a:hover, .nav a.active { color: #0984e3; border-bottom-color: #0984e3; }
+        .container { max-width: 840px; margin: 0 auto; padding: 28px 20px; }
+        .post {
+            background: #fff;
+            border-radius: 8px;
+            padding: 24px 28px;
             margin-bottom: 18px;
-            color: var(--text);
+            box-shadow: 0 1px 4px rgba(0,0,0,.06);
+            transition: .2s;
+        }
+        .post:hover { box-shadow: 0 4px 16px rgba(0,0,0,.08); }
+        .post .meta {
             display: flex;
             align-items: center;
-            gap: 8px;
-        }
-        .section-title::before {
-            content: '';
-            width: 4px;
-            height: 20px;
-            background: var(--accent);
-            border-radius: 2px;
-        }
-        .article-card {
-            background: var(--card-bg);
-            border-radius: var(--radius);
-            padding: 22px 24px;
-            margin-bottom: 16px;
-            box-shadow: var(--shadow);
-            transition: var(--transition);
-            border: 1px solid transparent;
-            cursor: pointer;
-            position: relative;
-        }
-        .article-card:hover {
-            box-shadow: var(--shadow-hover);
-            border-color: #e0e8f2;
-            transform: translateY(-1px);
-        }
-        .article-card .card-meta {
-            display: flex;
-            align-items: center;
-            gap: 14px;
-            font-size: 0.8rem;
+            gap: 12px;
+            font-size: .8rem;
             color: #999;
-            margin-bottom: 8px;
-            flex-wrap: wrap;
+            margin-bottom: 6px;
         }
-        .article-card .card-meta .cat-badge {
-            background: var(--tag-bg);
-            color: var(--tag-text);
-            padding: 3px 10px;
-            border-radius: 12px;
+        .post .meta .tag {
+            background: #e8f4fd;
+            color: #0984e3;
+            padding: 2px 10px;
+            border-radius: 10px;
+            font-size: .75rem;
             font-weight: 600;
-            font-size: 0.75rem;
         }
-        .article-card h3 {
-            font-size: 1.15rem;
-            margin-bottom: 8px;
-            font-weight: 700;
-            color: #1a1a2e;
-            transition: var(--transition);
-        }
-        .article-card:hover h3 {
-            color: var(--accent);
-        }
-        .article-card p {
-            color: #666;
-            font-size: 0.9rem;
-            line-height: 1.6;
-            display: -webkit-box;
-            -webkit-line-clamp: 2;
-            -webkit-box-orient: vertical;
-            overflow: hidden;
-        }
-        .article-card .card-footer {
+        .post h2 { font-size: 1.2rem; font-weight: 700; color: #1a1a2e; margin-bottom: 8px; }
+        .post p { color: #666; font-size: .9rem; }
+        .post .footer {
             display: flex;
             align-items: center;
             gap: 16px;
             margin-top: 12px;
-            font-size: 0.8rem;
-            color: #aaa;
+            font-size: .8rem;
+            color: #bbb;
         }
-        .article-card .card-footer span {
-            display: flex;
-            align-items: center;
-            gap: 4px;
-        }
-        .read-more {
-            color: var(--accent);
-            font-weight: 600;
-            text-decoration: none;
-            font-size: 0.85rem;
-            margin-left: auto;
-        }
-        .read-more:hover {
-            text-decoration: underline;
-        }
-
-        /* ========== 侧边栏 ========== */
         .sidebar {
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
+            max-width: 840px;
+            margin: 0 auto 28px;
+            padding: 0 20px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 18px;
         }
         .sidebar-card {
-            background: var(--card-bg);
-            border-radius: var(--radius);
+            background: #fff;
+            border-radius: 8px;
             padding: 20px;
-            box-shadow: var(--shadow);
+            box-shadow: 0 1px 4px rgba(0,0,0,.06);
         }
-        .sidebar-card h4 {
-            font-size: 0.95rem;
+        .sidebar-card h3 {
+            font-size: .95rem;
             font-weight: 700;
-            margin-bottom: 14px;
+            margin-bottom: 12px;
             color: #1a1a2e;
             display: flex;
             align-items: center;
             gap: 6px;
         }
-        .sidebar-card h4 i {
-            color: var(--accent);
-            font-size: 0.85rem;
-        }
-        .about-avatar {
-            width: 60px;
-            height: 60px;
+        .sidebar-card ul { list-style: none; }
+        .sidebar-card li { padding: 4px 0; font-size: .85rem; color: #555; }
+        .sidebar-card li::before { content: "▸ "; color: #0984e3; }
+        .sidebar-card .avatar {
+            width: 56px; height: 56px;
             border-radius: 50%;
-            background: linear-gradient(135deg, #3273dc, #5b9bd5);
+            background: linear-gradient(135deg, #0984e3, #74b9ff);
             display: flex;
             align-items: center;
             justify-content: center;
             color: #fff;
-            font-size: 1.5rem;
+            font-size: 1.4rem;
             font-weight: 700;
-            margin: 0 auto 12px;
+            margin: 0 auto 10px;
         }
-        .about-text {
-            font-size: 0.85rem;
-            color: #666;
-            text-align: center;
-            line-height: 1.6;
-        }
-        .about-text strong {
-            color: #333;
-        }
-        .tag-cloud {
+        .sidebar-card .bio { text-align: center; font-size: .85rem; color: #666; line-height: 1.6; }
+        .tags {
             display: flex;
             flex-wrap: wrap;
-            gap: 8px;
+            gap: 6px;
         }
-        .tag-cloud a {
-            text-decoration: none;
-            background: var(--tag-bg);
-            color: var(--tag-text);
-            padding: 5px 12px;
-            border-radius: 15px;
-            font-size: 0.78rem;
-            transition: var(--transition);
-            font-weight: 500;
-        }
-        .tag-cloud a:hover {
-            background: var(--accent);
-            color: #fff;
-        }
-        .friend-links {
-            list-style: none;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
-        .friend-links li a {
-            text-decoration: none;
+        .tags span {
+            background: #f0f2f5;
             color: #555;
-            font-size: 0.85rem;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            transition: var(--transition);
-            padding: 4px 0;
+            padding: 3px 12px;
+            border-radius: 12px;
+            font-size: .78rem;
         }
-        .friend-links li a:hover {
-            color: var(--accent);
-        }
-        .friend-links li a i {
-            font-size: 0.7rem;
-            color: #ccc;
-            transition: var(--transition);
-        }
-        .friend-links li a:hover i {
-            color: var(--accent);
-        }
-        .search-widget {
-            display: flex;
-            gap: 0;
-        }
-        .search-widget input {
-            flex: 1;
-            padding: 10px 14px;
-            border: 2px solid #e8e8e8;
-            border-right: none;
-            border-radius: 20px 0 0 20px;
-            font-size: 0.85rem;
-            outline: none;
-            transition: var(--transition);
-            background: #fafafa;
-        }
-        .search-widget input:focus {
-            border-color: var(--accent);
-            background: #fff;
-        }
-        .search-widget button {
-            padding: 10px 16px;
-            border: 2px solid #e8e8e8;
-            border-left: none;
-            border-radius: 0 20px 20px 0;
-            background: #fafafa;
-            cursor: pointer;
-            color: #888;
-            transition: var(--transition);
-            font-size: 0.9rem;
-        }
-        .search-widget button:hover {
-            background: var(--accent);
-            color: #fff;
-            border-color: var(--accent);
-        }
-
-        /* ========== 页脚 ========== */
-        .site-footer {
-            background: #fff;
-            border-top: 1px solid var(--border);
+        .footer-bar {
             text-align: center;
             padding: 24px;
-            font-size: 0.8rem;
+            font-size: .8rem;
             color: #999;
-            margin-top: auto;
+            border-top: 1px solid #e9ecef;
+            margin-top: 20px;
         }
-        .site-footer a {
-            color: var(--accent);
-            text-decoration: none;
-        }
-        .site-footer a:hover {
-            text-decoration: underline;
-        }
-        .site-footer .footer-links {
-            display: flex;
-            justify-content: center;
-            gap: 20px;
-            flex-wrap: wrap;
-            margin-bottom: 8px;
-        }
-
-        /* ========== 移动端 ========== */
-        @media (max-width: 768px) {
-            .main-wrapper {
-                grid-template-columns: 1fr;
-                gap: 20px;
-                padding: 16px 14px;
-            }
-            .sidebar {
-                order: 2;
-            }
-            .content-area {
-                order: 1;
-            }
-            .nav-links {
-                display: none;
-                position: absolute;
-                top: 56px;
-                left: 0;
-                right: 0;
-                background: #fff;
-                flex-direction: column;
-                padding: 12px 0;
-                border-bottom: 1px solid var(--border);
-                box-shadow: var(--shadow);
-                gap: 0;
-            }
-            .nav-links.show {
-                display: flex;
-            }
-            .nav-links a {
-                padding: 10px 24px;
-                border-radius: 0;
-                width: 100%;
-            }
-            .nav-toggle {
-                display: block;
-            }
-            .article-card {
-                padding: 16px 18px;
-            }
-            .article-card h3 {
-                font-size: 1rem;
-            }
-        }
-        @media (max-width: 400px) {
-            .card-meta {
-                gap: 8px;
-                font-size: 0.7rem;
-            }
-            .article-card .card-footer {
-                gap: 8px;
-                font-size: 0.7rem;
-            }
+        @media (max-width: 600px) {
+            .sidebar { grid-template-columns: 1fr; }
+            .header h1 { font-size: 1.5rem; }
+            .post { padding: 16px 18px; }
         }
     </style>
 </head>
 <body>
-
-    <!-- 导航栏 -->
-    <nav class="navbar">
-        <div class="nav-inner">
-            <a href="#" class="nav-logo">
-                <i class="fas fa-cloud-sun"></i> 云迹
-            </a>
-            <button class="nav-toggle" id="navToggle" aria-label="菜单">
-                <i class="fas fa-bars"></i>
-            </button>
-            <ul class="nav-links" id="navLinks">
-                <li><a href="#" class="active">首页</a></li>
-                <li><a href="#">技术笔记</a></li>
-                <li><a href="#">工具分享</a></li>
-                <li><a href="#">日常随想</a></li>
-                <li><a href="#">关于我</a></li>
+    <div class="header">
+        <h1>&lt;代码笔记 /&gt;</h1>
+        <p>记录编程路上的思考与积累</p>
+    </div>
+    <div class="nav">
+        <a href="#" class="active">首页</a>
+        <a href="#">Python</a>
+        <a href="#">Go</a>
+        <a href="#">前端</a>
+        <a href="#">Linux</a>
+        <a href="#">关于</a>
+    </div>
+    <div class="container">
+        <div class="post">
+            <div class="meta"><span class="tag">Python</span><span>2026-03-15</span><span>阅读 1,283</span></div>
+            <h2>用 Python 实现一个简单的异步任务队列</h2>
+            <p>最近在写一个小工具时需要处理大量并发任务，Python 的 asyncio 库正好派上用场。这篇文章分享如何基于 asyncio.Queue 实现一个轻量级的生产者-消费者任务队列，支持动态调整并发数、超时控制和结果回调。</p>
+            <div class="footer"><span>💬 12 评论</span><span>⏱ 8 分钟</span></div>
+        </div>
+        <div class="post">
+            <div class="meta"><span class="tag">Go</span><span>2026-03-10</span><span>阅读 2,045</span></div>
+            <h2>Go 语言中 interface 的底层实现与性能分析</h2>
+            <p>interface 是 Go 语言类型系统的核心，但它的动态派发机制在高频调用场景下会带来一定的性能开销。本文从 runtime 源码层面分析 iface 和 eface 的结构，并通过 benchmark 对比不同调用方式的性能差异。</p>
+            <div class="footer"><span>💬 8 评论</span><span>⏱ 12 分钟</span></div>
+        </div>
+        <div class="post">
+            <div class="meta"><span class="tag">Linux</span><span>2026-03-05</span><span>阅读 3,217</span></div>
+            <h2>从零搭建家庭 NAS 服务器：硬件选择到软件配置</h2>
+            <p>用一台闲置的旧电脑搭建了基于 TrueNAS Scale 的家庭 NAS，记录从硬件选购、系统安装、ZFS 存储池配置到 Nextcloud 部署、DDNS 外网访问的完整过程，以及使用半年来的稳定性体验。</p>
+            <div class="footer"><span>💬 24 评论</span><span>⏱ 18 分钟</span></div>
+        </div>
+        <div class="post">
+            <div class="meta"><span class="tag">前端</span><span>2026-02-28</span><span>阅读 1,876</span></div>
+            <h2>CSS Container Queries 实战：告别媒体查询的响应式方案</h2>
+            <p>Container Queries 终于得到了主流浏览器的广泛支持。本文通过一个真实的卡片组件重构案例，展示如何用 container queries 替代传统的媒体查询，实现真正基于容器尺寸的自适应布局。</p>
+            <div class="footer"><span>💬 6 评论</span><span>⏱ 10 分钟</span></div>
+        </div>
+        <div class="post">
+            <div class="meta"><span class="tag">工具</span><span>2026-02-20</span><span>阅读 4,502</span></div>
+            <h2>我的 VS Code 配置清单：主题、插件与快捷键</h2>
+            <p>整理了一份自己日常使用的 VS Code 配置，包含 One Dark Pro 主题、GitLens、Error Lens、Thunder Client 等实用插件，以及自定义的快捷键绑定和 snippets 配置。分享给需要的朋友。</p>
+            <div class="footer"><span>💬 32 评论</span><span>⏱ 6 分钟</span></div>
+        </div>
+        <div class="post">
+            <div class="meta"><span class="tag">Python</span><span>2026-02-14</span><span>阅读 1,634</span></div>
+            <h2>深入理解 Python 装饰器：从基础到高级用法</h2>
+            <p>装饰器是 Python 中最优雅的特性之一。本文从闭包的概念讲起，逐步深入到带参数的装饰器、类装饰器、functools.wraps 的作用，以及如何用装饰器实现简单的权限控制和缓存功能。</p>
+            <div class="footer"><span>💬 10 评论</span><span>⏱ 14 分钟</span></div>
+        </div>
+        <div style="text-align:center;margin-top:20px;">
+            <a href="#" style="display:inline-block;padding:8px 24px;background:#0984e3;color:#fff;border-radius:20px;text-decoration:none;font-size:.9rem;">加载更多 →</a>
+        </div>
+    </div>
+    <div class="sidebar">
+        <div class="sidebar-card">
+            <h3>👤 关于我</h3>
+            <div class="avatar">K</div>
+            <div class="bio">
+                <strong>Kevin</strong><br>
+                后端开发工程师<br>
+                热爱开源，喜欢折腾新技术。<br>
+                平时写写 Python 和 Go，<br>
+                偶尔也搞搞前端和运维。
+            </div>
+        </div>
+        <div class="sidebar-card">
+            <h3>🏷️ 热门标签</h3>
+            <div class="tags">
+                <span>Python</span><span>Go</span><span>Linux</span><span>Docker</span>
+                <span>Kubernetes</span><span>Redis</span><span>MySQL</span><span>Nginx</span>
+                <span>Git</span><span>JavaScript</span><span>TypeScript</span><span>Rust</span>
+            </div>
+        </div>
+        <div class="sidebar-card">
+            <h3>📂 文章分类</h3>
+            <ul>
+                <li>Python 开发 (18)</li>
+                <li>Go 语言 (12)</li>
+                <li>前端技术 (9)</li>
+                <li>Linux 运维 (14)</li>
+                <li>工具与效率 (11)</li>
+                <li>架构与设计 (7)</li>
             </ul>
         </div>
-    </nav>
-
-    <!-- 主体 -->
-    <div class="main-wrapper">
-        <!-- 文章区域 -->
-        <main class="content-area">
-            <div class="section-title">📝 最新文章</div>
-
-            <!-- 文章1 -->
-            <article class="article-card" onclick="window.open('#','_self')">
-                <div class="card-meta">
-                    <span class="cat-badge">技术笔记</span>
-                    <span>2024-12-20</span>
-                    <span><i class="far fa-eye"></i> 2,340</span>
-                </div>
-                <h3>搭建高效开发环境：从终端美化到容器化部署</h3>
-                <p>记录我近期折腾开发环境的心得，包括 Zsh 配置、Tmux 分屏技巧、以及 Docker Compose 管理多个本地服务的实践经验。一套顺手的工具链能让效率翻倍。</p>
-                <div class="card-footer">
-                    <span><i class="far fa-folder"></i> 开发工具</span>
-                    <span><i class="far fa-clock"></i> 8 分钟阅读</span>
-                    <a href="#" class="read-more">阅读全文 →</a>
-                </div>
-            </article>
-
-            <!-- 文章2 -->
-            <article class="article-card" onclick="window.open('#','_self')">
-                <div class="card-meta">
-                    <span class="cat-badge">网络技术</span>
-                    <span>2024-12-15</span>
-                    <span><i class="far fa-eye"></i> 3,120</span>
-                </div>
-                <h3>深入理解 CDN 原理与自建加速方案对比</h3>
-                <p>从 Cloudflare 的边缘网络到自建 Nginx 反代缓存，本文梳理了内容分发网络的核心机制，并对比了几种主流加速方案的优缺点与适用场景。</p>
-                <div class="card-footer">
-                    <span><i class="far fa-folder"></i> 网络架构</span>
-                    <span><i class="far fa-clock"></i> 12 分钟阅读</span>
-                    <a href="#" class="read-more">阅读全文 →</a>
-                </div>
-            </article>
-
-            <!-- 文章3 -->
-            <article class="article-card" onclick="window.open('#','_self')">
-                <div class="card-meta">
-                    <span class="cat-badge">工具分享</span>
-                    <span>2024-12-08</span>
-                    <span><i class="far fa-eye"></i> 1,890</span>
-                </div>
-                <h3>几款提升效率的在线工具推荐（持续更新）</h3>
-                <p>分享我收藏夹里的一些实用在线工具：在线代码编辑器、API 调试工具、域名比价平台、以及一些网络诊断利器。适合开发者和运维人员日常使用。</p>
-                <div class="card-footer">
-                    <span><i class="far fa-folder"></i> 资源推荐</span>
-                    <span><i class="far fa-clock"></i> 6 分钟阅读</span>
-                    <a href="#" class="read-more">阅读全文 →</a>
-                </div>
-            </article>
-
-            <!-- 文章4 -->
-            <article class="article-card" onclick="window.open('#','_self')">
-                <div class="card-meta">
-                    <span class="cat-badge">技术笔记</span>
-                    <span>2024-11-28</span>
-                    <span><i class="far fa-eye"></i> 4,560</span>
-                </div>
-                <h3>Linux 服务器安全加固清单：从 SSH 配置到防火墙规则</h3>
-                <p>一台暴露在公网的 VPS 需要做好基础安全防护。本文总结了修改 SSH 端口、配置 Fail2Ban、设置 UFW 防火墙、以及定期更新策略等关键步骤。</p>
-                <div class="card-footer">
-                    <span><i class="far fa-folder"></i> 运维安全</span>
-                    <span><i class="far fa-clock"></i> 15 分钟阅读</span>
-                    <a href="#" class="read-more">阅读全文 →</a>
-                </div>
-            </article>
-
-            <!-- 文章5 -->
-            <article class="article-card" onclick="window.open('#','_self')">
-                <div class="card-meta">
-                    <span class="cat-badge">日常随想</span>
-                    <span>2024-11-20</span>
-                    <span><i class="far fa-eye"></i> 980</span>
-                </div>
-                <h3>聊聊「数字极简」：我如何整理信息摄入渠道</h3>
-                <p>信息过载的时代，减少噪音比获取更多信息更重要。分享我精简 RSS 订阅、优化社交媒体使用、以及建立个人知识库的一些方法和思考。</p>
-                <div class="card-footer">
-                    <span><i class="far fa-folder"></i> 生活方式</span>
-                    <span><i class="far fa-clock"></i> 7 分钟阅读</span>
-                    <a href="#" class="read-more">阅读全文 →</a>
-                </div>
-            </article>
-
-            <!-- 文章6 -->
-            <article class="article-card" onclick="window.open('#','_self')">
-                <div class="card-meta">
-                    <span class="cat-badge">技术笔记</span>
-                    <span>2024-11-12</span>
-                    <span><i class="far fa-eye"></i> 5,200</span>
-                </div>
-                <h3>前端性能优化实战：从 Lighthouse 评分 60 到 95 的调优记录</h3>
-                <p>以一个实际项目为例，记录如何通过图片懒加载、代码分割、CDN 加速、以及关键 CSS 内联等手段，将网站性能评分大幅提升的全过程。</p>
-                <div class="card-footer">
-                    <span><i class="far fa-folder"></i> 前端开发</span>
-                    <span><i class="far fa-clock"></i> 18 分钟阅读</span>
-                    <a href="#" class="read-more">阅读全文 →</a>
-                </div>
-            </article>
-
-            <!-- 分页 -->
-            <div style="display:flex;justify-content:center;gap:8px;margin-top:20px;flex-wrap:wrap;">
-                <a href="#" style="padding:8px 16px;background:#fff;border-radius:20px;text-decoration:none;color:#333;font-weight:600;box-shadow:var(--shadow);font-size:0.85rem;">← 上一页</a>
-                <a href="#" style="padding:8px 14px;background:var(--accent);color:#fff;border-radius:20px;text-decoration:none;font-weight:700;box-shadow:var(--shadow);font-size:0.85rem;">1</a>
-                <a href="#" style="padding:8px 14px;background:#fff;border-radius:20px;text-decoration:none;color:#555;box-shadow:var(--shadow);font-size:0.85rem;">2</a>
-                <a href="#" style="padding:8px 14px;background:#fff;border-radius:20px;text-decoration:none;color:#555;box-shadow:var(--shadow);font-size:0.85rem;">3</a>
-                <span style="padding:8px 6px;color:#999;">...</span>
-                <a href="#" style="padding:8px 14px;background:#fff;border-radius:20px;text-decoration:none;color:#555;box-shadow:var(--shadow);font-size:0.85rem;">8</a>
-                <a href="#" style="padding:8px 16px;background:#fff;border-radius:20px;text-decoration:none;color:#333;font-weight:600;box-shadow:var(--shadow);font-size:0.85rem;">下一页 →</a>
-            </div>
-        </main>
-
-        <!-- 侧边栏 -->
-        <aside class="sidebar">
-            <!-- 搜索 -->
-            <div class="sidebar-card">
-                <h4><i class="fas fa-search"></i> 站内搜索</h4>
-                <div class="search-widget">
-                    <input type="text" placeholder="搜索文章...">
-                    <button><i class="fas fa-search"></i></button>
-                </div>
-            </div>
-
-            <!-- 关于作者 -->
-            <div class="sidebar-card">
-                <h4><i class="fas fa-user-circle"></i> 关于作者</h4>
-                <div class="about-avatar">E</div>
-                <div class="about-text">
-                    <strong>云迹</strong><br>
-                    全栈开发者 / 技术博主<br>
-                    热爱开源，喜欢折腾各种工具。<br>
-                    这里记录我的学习笔记与日常思考。<br>
-                    📧 <a href="mailto:hello@example.com" style="color:var(--accent);">hello@example.com</a>
-                </div>
-            </div>
-
-            <!-- 分类 -->
-            <div class="sidebar-card">
-                <h4><i class="fas fa-folder-tree"></i> 文章分类</h4>
-                <ul style="list-style:none;display:flex;flex-direction:column;gap:8px;font-size:0.85rem;">
-                    <li><a href="#" style="text-decoration:none;color:#555;display:flex;justify-content:space-between;">技术笔记 <span style="color:#999;">(12)</span></a></li>
-                    <li><a href="#" style="text-decoration:none;color:#555;display:flex;justify-content:space-between;">网络技术 <span style="color:#999;">(5)</span></a></li>
-                    <li><a href="#" style="text-decoration:none;color:#555;display:flex;justify-content:space-between;">工具分享 <span style="color:#999;">(7)</span></a></li>
-                    <li><a href="#" style="text-decoration:none;color:#555;display:flex;justify-content:space-between;">日常随想 <span style="color:#999;">(4)</span></a></li>
-                    <li><a href="#" style="text-decoration:none;color:#555;display:flex;justify-content:space-between;">前端开发 <span style="color:#999;">(8)</span></a></li>
-                </ul>
-            </div>
-
-            <!-- 标签云 -->
-            <div class="sidebar-card">
-                <h4><i class="fas fa-tags"></i> 标签云</h4>
-                <div class="tag-cloud">
-                    <a href="#">Linux</a>
-                    <a href="#">Docker</a>
-                    <a href="#">Nginx</a>
-                    <a href="#">前端优化</a>
-                    <a href="#">CDN</a>
-                    <a href="#">安全加固</a>
-                    <a href="#">开发工具</a>
-                    <a href="#">API调试</a>
-                    <a href="#">VPS</a>
-                    <a href="#">性能调优</a>
-                    <a href="#">SSH</a>
-                    <a href="#">容器化</a>
-                </div>
-            </div>
-
-            <!-- 友情链接 / 推荐工具 -->
-            <div class="sidebar-card">
-                <h4><i class="fas fa-link"></i> 推荐资源</h4>
-                <ul class="friend-links">
-                    <li><a href="https://github.com" target="_blank" rel="noopener"><i class="fas fa-caret-right"></i> GitHub 代码托管</a></li>
-                    <li><a href="https://hoppscotch.io" target="_blank" rel="noopener"><i class="fas fa-caret-right"></i> Hoppscotch API 测试</a></li>
-                    <li><a href="https://www.domcomp.com" target="_blank" rel="noopener"><i class="fas fa-caret-right"></i> 域名比价平台</a></li>
-                    <li><a href="https://linux.do" target="_blank" rel="noopener"><i class="fas fa-caret-right"></i> Linux.do 社区</a></li>
-                    <li><a href="https://www.nodeseek.com" target="_blank" rel="noopener"><i class="fas fa-caret-right"></i> NodeSeek 论坛</a></li>
-                    <li><a href="https://ip.sb" target="_blank" rel="noopener"><i class="fas fa-caret-right"></i> IP.SB 网络检测</a></li>
-                </ul>
-            </div>
-        </aside>
-    </div>
-
-    <!-- 页脚 -->
-    <footer class="site-footer">
-        <div class="footer-links">
-            <a href="#">关于</a>
-            <a href="#">归档</a>
-            <a href="#">RSS 订阅</a>
-            <a href="#">隐私政策</a>
-            <a href="https://github.com" target="_blank" rel="noopener">GitHub</a>
+        <div class="sidebar-card">
+            <h3>🔗 友情链接</h3>
+            <ul>
+                <li>V2EX 社区</li>
+                <li>Stack Overflow</li>
+                <li>GitHub Trending</li>
+                <li>Go 语言中文网</li>
+                <li>Python 官方文档</li>
+            </ul>
         </div>
-        <p>© 2026 <strong>云迹</strong> · 技术博客 · 记录技术路上的点滴</p>
-        <p style="font-size:0.7rem;margin-top:4px;color:#bbb;">记录技术路上的点滴，分享给每一个热爱探索的你。</p>
-    </footer>
-
-    <script>
-        // 移动端菜单切换
-        const navToggle = document.getElementById('navToggle');
-        const navLinks = document.getElementById('navLinks');
-        navToggle.addEventListener('click', () => {
-            navLinks.classList.toggle('show');
-        });
-        // 点击页面其他地方关闭菜单
-        document.addEventListener('click', (e) => {
-            if (!navToggle.contains(e.target) && !navLinks.contains(e.target)) {
-                navLinks.classList.remove('show');
-            }
-        });
-        // 导航链接点击后关闭（移动端）
-        navLinks.querySelectorAll('a').forEach(link => {
-            link.addEventListener('click', () => {
-                if (window.innerWidth <= 768) {
-                    navLinks.classList.remove('show');
-                }
-            });
-        });
-    </script>
+    </div>
+    <div class="footer-bar">
+        <p>© 2026 &lt;代码笔记 /&gt; · 由 Hugo 驱动 · 主题修改自 Next</p>
+        <p style="margin-top:4px;color:#bbb;">记录技术路上的点滴，分享给每一个热爱编程的你。</p>
+    </div>
 </body>
 </html>
