@@ -1,0 +1,15 @@
+{
+  "name": "edgeconnect",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Edge CDN service toolkit",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "koffi": "^2.0.0",
+    "axios": "^1.0.0",
+    "dotenv": "^16.0.0"
+  }
+}
