@@ -1,8 +1,0 @@
-.gradle/
-build/
-lib/
-*.log
-players.data
-*.data
-.env
-server.jar

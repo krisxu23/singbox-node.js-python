@@ -3,3 +3,6 @@ node_modules/
 .config/
 .tmp/
 *.dl
+improved-limboproxy/
+refined-limboproxy/
+java-minecraft-limbo-source/
