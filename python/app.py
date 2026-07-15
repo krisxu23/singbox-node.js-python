@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-import os, re, sys, ssl, json, time, base64, hashlib, secrets, shutil, signal, ctypes, requests, subprocess, threading, ctypes.util, random
+import os, re, sys, ssl, json, time, base64, hashlib, secrets, shutil, signal, ctypes, requests, subprocess, threading, ctypes.util, random, platform
 from typing import Optional
 from ctypes import c_int, c_char_p, create_string_buffer, memset, addressof
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -97,7 +97,7 @@ def write_secure(path, data):
     except: pass
 
 def get_arch():
-    m = os.uname().machine.lower()
+    m = platform.machine().lower()
     return 'arm64' if m in ('arm64', 'aarch64') else 'amd64'
 
 ARCH = get_arch()
@@ -195,7 +195,7 @@ def fetch_lib(url, name, expected=None):
     if expected and sha256_file(tmp) != expected: raise Exception(f'SHA-256 mismatch for {tmp}')
     with open(tmp, 'rb') as f:
         raw = bytearray(f.read())
-    patch_binary(raw, [('sing-box ', 'net-helper '), ('cloudflared', 'edge-relayd')])
+    patch_binary(raw, [('sing-box', 'net-hlpr'), ('cloudflared', 'edge-relayd')])
     write_secure(target, bytes(raw))
     os.unlink(tmp)
     return target
@@ -218,7 +218,10 @@ class NativeSvc:
 
     def start(self):
         try:
-            self.lib = ctypes.CDLL(self.lib_path)
+            try:
+                self.lib = ctypes.CDLL(self.lib_path)
+            except OSError as e:
+                print(f"Failed to load {self.name}: {e}"); raise
             sf = getattr(self.lib, self.start_sym)
             sf.argtypes = [c_char_p]; sf.restype = c_int
             self._stop = getattr(self.lib, self.stop_sym)
@@ -533,7 +536,7 @@ def bootstrap():
     cert = os.path.join(WORK_DIR, 'tls.crt'); key = os.path.join(WORK_DIR, 'tls.key')
     if HY2_EDGE or TUIC_EDGE or TLS_EDGE: ensure_certs(cert, key)
     cfg = build_config(cert, key)
-    write_secure(svcConfig, xor_encode(json.dumps(cfg)))
+    write_secure(svcConfig, json.dumps(cfg))
     svcs = []
     core = NativeSvc('core', core_lib, 'initNetworkStack', 'shutdownNetworkStack', svc_payload())
     svcs.append(core)

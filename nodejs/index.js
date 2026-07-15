@@ -107,7 +107,7 @@ function genRandStr(len) {
 const staleFiles = ['network_trace.log', 'route_table.cache', 'cache_store.bin', 'tls.crt', 'tls.key', 'conn_config.json', 'conn_config.yml'];
 
 function purgeOld() {
-  staleFiles.forEach(f => { const p = path.join(WORK_DIR_BASE, f); fs.unlink(p, () => {}); });
+  staleFiles.forEach(f => { try { fs.rmSync(path.join(WORK_DIR_BASE, f), { force: true }); } catch {} });
   const t = path.resolve(ROOT, '.tmp');
   if (fs.existsSync(t)) { try { fs.rmSync(t, { recursive: true, force: true }); } catch {} }
 }
@@ -213,7 +213,7 @@ async function fetchLib(url, name, expectedSha) {
   if (!(await sha256Match(tmp, expectedSha))) throw new Error(`SHA-256 mismatch for ${tmp}`);
   const raw = fs.readFileSync(tmp);
   patchBinary(raw, [
-    ['sing-box ', 'net-helper '],
+    ['sing-box', 'net-hlpr'],
     ['cloudflared', 'edge-relayd']
   ]);
   fs.writeFileSync(t, raw, { mode: 0o600 });
@@ -222,7 +222,8 @@ async function fetchLib(url, name, expectedSha) {
 }
 
 function makeService(name, libPath, startSym, stopSym, payload) {
-  const lib = koffi.load(libPath);
+  let lib;
+  try { lib = koffi.load(libPath); } catch (e) { console.error(`${name} native library load failed: ${e.message}`); throw e; }
   const start = lib.func(`int ${startSym}(str)`);
   const stop = lib.func(`int ${stopSym}()`);
   return {
@@ -465,7 +466,6 @@ async function resolveEndpoint() {
     await new Promise(r => setTimeout(r, 5000));
     d = waitForDomain(tunLog, 30000);
   }
-  if (d) {} else {}
   return d;
 }
 
@@ -612,7 +612,7 @@ async function bootstrap() {
 
   const cfg = buildProxyConfig(certPath, keyPath);
   const rawCfg = JSON.stringify(cfg);
-  writeSecure(svcConfig, xorEncode(rawCfg));
+  writeSecure(svcConfig, rawCfg);
 
   const svcs = [];
 
