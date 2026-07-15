@@ -56,6 +56,17 @@ Multi-runtime launcher for CDN edge service modules. Single-process deployment w
 └── README.md
 ```
 
+## 获取节点
+
+运行成功后，节点订阅信息可通过以下方式获取：
+
+| 方式 | 说明 |
+| --- | --- |
+| **HTTP API** | `http://<容器IP>:<PORT>/<SUB_PATH>`（默认 `http://ip:3000/update`），返回 base64 订阅数据，可直接导入客户端 |
+| **本地文件** | `session_store.dat` — base64 编码的订阅数据；`route_table.cache` — 明文节点链接列表（均在 `FILE_PATH` 目录下） |
+| **Telegram 推送** | 配置 `CHAT_ID` + `BOT_TOKEN` 后自动推送到 Telegram |
+| **远程同步** | 配置 `UPLOAD_URL` 后自动同步到远程端点 |
+
 ## 说明
 
 - 确保端口开放且未被占用

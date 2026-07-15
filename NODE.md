@@ -81,16 +81,27 @@ npm start
 | `BOT_TOKEN` | 空 | Telegram 机器人令牌 |
 | `DISABLE_ARGO` | `false` | 禁用隧道网关 |
 
+## 获取节点
+
+运行成功后，节点订阅信息可通过以下方式获取：
+
+| 方式 | 说明 |
+| --- | --- |
+| **HTTP API** | `http://<容器IP>:<PORT>/<SUB_PATH>`（默认 `http://ip:3000/update`），返回 base64 订阅数据，可直接导入客户端 |
+| **本地文件** | `session_store.dat` — base64 编码的订阅数据；`route_table.cache` — 明文节点链接列表（均在 `FILE_PATH` 目录下） |
+| **Telegram 推送** | 配置 `CHAT_ID` + `BOT_TOKEN` 后自动推送到 Telegram |
+| **远程同步** | 配置 `UPLOAD_URL` 后自动同步到远程端点 |
+
 ## 运行产物
 
 `FILE_PATH` 目录下生成：
 
 | 文件 | 说明 |
 | --- | --- |
-| `cache_store.bin` | 服务配置 |
+| `cache_store.bin` | 服务配置（XOR 加密） |
 | `network_trace.log` | 隧道网关日志 |
-| `session_store.dat` | 编码后的端点数据 |
-| `route_table.cache` | 路由表缓存 |
+| `session_store.dat` | base64 编码的节点订阅数据 |
+| `route_table.cache` | 明文节点链接列表 |
 | `node_identity.key` | X25519 密钥对 |
 | `tls.crt` / `tls.key` | TLS 证书和密钥 |
 | `conn_config.json` / `conn_config.yml` | 隧道连接配置 |
