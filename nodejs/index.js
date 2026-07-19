@@ -660,7 +660,6 @@ async function bootstrap() {
   } else {
     log('cloudflared binary not available - Argo tunnel will not start');
   }
-  }
 
   process.on('SIGINT', stopAll);
   process.on('SIGTERM', stopAll);
@@ -674,7 +673,7 @@ async function bootstrap() {
   startHTTP(svcData);
 
   const subUrl = env.PUBLIC_URL ? `${env.PUBLIC_URL}${syncPath}` : '(not set)';
-  log(`subscription URL: ${url}`);
+  log(`subscription URL: ${subUrl}`);
 
   await notifyTG();
   await syncRemote();
