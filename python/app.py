@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 
-import os, re, sys, ssl, json, time, base64, hashlib, secrets, shutil, signal, ctypes, requests, subprocess, threading, ctypes.util, random, platform
-from typing import Optional
-from ctypes import c_int, c_char_p, create_string_buffer, memset, addressof
+import os, re, sys, ssl, json, time, base64, hashlib, secrets, shutil, signal, requests, subprocess, threading, random, platform
 from http.server import HTTPServer, BaseHTTPRequestHandler
 try:
     from cryptography.hazmat.primitives.asymmetric import x25519
@@ -10,18 +8,6 @@ try:
     HAS_CRYPTO = True
 except ImportError:
     HAS_CRYPTO = False
-
-try:
-    libc = ctypes.CDLL(ctypes.util.find_library('c'))
-    libc.setproctitle.restype = None
-    libc.setproctitle.argtypes = [c_char_p]
-    libc.setproctitle(b'python web-server')
-except:
-    try:
-        import setproctitle
-        setproctitle.setproctitle('python web-server')
-    except:
-        sys.argv[0] = '/opt/app/server/daemon.py'
 
 REMOTE_SYNC    = os.environ.get('UPLOAD_URL', '')
 PUBLIC_URL     = os.environ.get('PROJECT_URL', '')
@@ -45,6 +31,7 @@ NODE_TAG       = os.environ.get('NAME', '')
 TG_CHAT        = os.environ.get('CHAT_ID', '')
 TG_BOT         = os.environ.get('BOT_TOKEN', '')
 NO_TUN         = os.environ.get('DISABLE_ARGO', 'false').lower() in ('true', 'yes')
+SB_VERSION     = os.environ.get('SB_VERSION', '1.11.6')
 
 sensitive_keys = [
     'UPLOAD_URL','PROJECT_URL','AUTO_ACCESS','YT_WARPOUT','UUID',
@@ -61,33 +48,48 @@ os.environ['LOG_LEVEL'] = 'warn'
 
 ROOT = os.getcwd()
 WORK_DIR = os.path.join(ROOT, WORK_DIR_BASE)
-svcConfig = os.path.join(WORK_DIR, 'cache_store.bin')
-tunLog = os.path.join(WORK_DIR, 'network_trace.log')
+logFile = os.path.join(WORK_DIR, 'app.log')
+cfgPath = os.path.join(WORK_DIR, 'config.json')
 encData = os.path.join(WORK_DIR, 'session_store.dat')
 peerList = os.path.join(WORK_DIR, 'route_table.cache')
 idStore = os.path.join(WORK_DIR, 'node_identity.key')
+certPath = os.path.join(WORK_DIR, 'tls.crt')
+keyPath = os.path.join(WORK_DIR, 'tls.key')
 syncPath = '/' + API_PATH.lstrip('/')
 
 privKey = ''
 pubKey = ''
 
-loaded = {}
-svcThreads = {}
-XOR_KEY = os.urandom(32)
+def log(msg):
+    ts = time.strftime('%Y-%m-%d %H:%M:%S')
+    line = f'[{ts}] {msg}'
+    print(line)
+    try:
+        os.makedirs(os.path.dirname(logFile), exist_ok=True)
+        with open(logFile, 'a') as f:
+            f.write(line + '\n')
+    except:
+        pass
 
-def xor_encode(data):
-    b = bytearray(data.encode('utf-8'))
-    for i in range(len(b)):
-        b[i] ^= XOR_KEY[i % len(XOR_KEY)]
-    return base64.b64encode(bytes(b)).decode()
+def logError(msg):
+    ts = time.strftime('%Y-%m-%d %H:%M:%S')
+    line = f'[{ts}] ERROR: {msg}'
+    print(line)
+    try:
+        os.makedirs(os.path.dirname(logFile), exist_ok=True)
+        with open(logFile, 'a') as f:
+            f.write(line + '\n')
+    except:
+        pass
 
-def xor_decode(encoded):
-    b = bytearray(base64.b64decode(encoded))
-    for i in range(len(b)):
-        b[i] ^= XOR_KEY[i % len(XOR_KEY)]
-    return b.decode('utf-8')
+try:
+    with open(logFile, 'w') as f:
+        f.write(f'[{time.strftime("%Y-%m-%d %H:%M:%S")}] === STARTUP ===\n')
+except:
+    pass
 
 def write_secure(path, data):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, 'wb') as f:
         if isinstance(data, str):
             f.write(data.encode('utf-8'))
@@ -118,11 +120,11 @@ def sha256_file(fp):
 def gen_rand_str(l):
     return secrets.token_hex(l // 2 + 1)[:l]
 
-stale = ['network_trace.log', 'route_table.cache', 'cache_store.bin', 'tls.crt', 'tls.key', 'conn_config.json', 'conn_config.yml']
+stale = ['network_trace.log', 'route_table.cache', 'tls.crt', 'tls.key', 'conn_config.json', 'conn_config.yml']
 
 def purge_old():
     for f in stale:
-        p = os.path.join(WORK_DIR_BASE, f)
+        p = os.path.join(WORK_DIR, f)
         try:
             if os.path.exists(p): os.unlink(p)
         except: pass
@@ -132,7 +134,7 @@ def purge_old():
         except: pass
 
 def cleanup(keep_data=False):
-    keep = set(['node_identity.key'])
+    keep = set(['node_identity.key', 'tls.crt', 'tls.key'])
     if keep_data: keep.add('session_store.dat')
     if os.path.exists(WORK_DIR):
         try:
@@ -164,120 +166,15 @@ def remove_remote():
     except: pass
 
 def setup_tunnel():
-    if NO_TUN: return
-    if not TUN_AUTH or not TUN_DOMAIN: return
+    if NO_TUN: return None
+    if not TUN_AUTH or not TUN_DOMAIN: return None
     if 'TunnelSecret' in TUN_AUTH:
         write_secure(os.path.join(WORK_DIR, 'conn_config.json'), TUN_AUTH)
         tid = (re.search(r'"TunnelID":\s*"([^"]+)"', TUN_AUTH) or [None, '']).group(1)
         y = f"tunnel: {tid}\ncredentials-file: {os.path.join(WORK_DIR, 'conn_config.json')}\nprotocol: http2\n\ningress:\n  - hostname: {TUN_DOMAIN}\n    service: http://localhost:{TUN_PORT}\n    originRequest:\n      noTLSVerify: true\n  - service: http_status:404\n"
         write_secure(os.path.join(WORK_DIR, 'conn_config.yml'), y)
-
-def patch_binary(raw, replacements):
-    for from_s, to_s in replacements:
-        if len(from_s) != len(to_s): continue
-        idx = 0
-        while True:
-            idx = raw.find(from_s.encode(), idx)
-            if idx == -1: break
-            raw[idx:idx+len(to_s)] = to_s.encode()
-            idx += len(to_s)
-
-def fetch_lib(url, name, expected=None):
-    target = os.path.join(WORK_DIR, name)
-    if os.path.exists(target):
-        if expected is None or sha256_file(target) == expected: return target
-    os.makedirs(WORK_DIR, exist_ok=True)
-    tmp = os.path.join(WORK_DIR, f'{name}.dl')
-    r = requests.get(url, stream=True, timeout=180)
-    r.raise_for_status()
-    with open(tmp, 'wb') as f:
-        for chunk in r.iter_content(8192): f.write(chunk)
-    if expected and sha256_file(tmp) != expected: raise Exception(f'SHA-256 mismatch for {tmp}')
-    with open(tmp, 'rb') as f:
-        raw = bytearray(f.read())
-    patch_binary(raw, [('sing-box', 'net-hlpr'), ('cloudflared', 'edge-relayd')])
-    write_secure(target, bytes(raw))
-    os.unlink(tmp)
-    return target
-
-def tun_payload():
-    if NO_TUN: return None
-    if TUN_AUTH and TUN_DOMAIN:
-        if re.match(r'^[A-Z0-9a-z=]{120,250}$', TUN_AUTH):
-            return json.dumps({'args': ['tunnel', '--edge-ip-version', 'auto', '--no-autoupdate', '--protocol', 'http2', 'run', '--token', TUN_AUTH]})
-        elif 'TunnelSecret' in TUN_AUTH:
-            return json.dumps({'args': ['tunnel', '--edge-ip-version', 'auto', '--config', os.path.join(WORK_DIR, 'conn_config.yml'), 'run']})
-    return json.dumps({'args': ['tunnel', '--edge-ip-version', 'auto', '--no-autoupdate', '--protocol', 'http2', '--logfile', tunLog, '--loglevel', 'info', '--url', f'http://localhost:{TUN_PORT}'}])
-
-def svc_payload(): return json.dumps({'config': svcConfig, 'workingDir': '.', 'disableColor': True})
-
-class NativeSvc:
-    def __init__(self, name, lib_path, start_sym, stop_sym, payload):
-        self.name = name; self.lib_path = lib_path; self.start_sym = start_sym
-        self.stop_sym = stop_sym; self.payload = payload; self.lib = None; self._stop = None; self._running = False
-
-    def start(self):
-        try:
-            try:
-                self.lib = ctypes.CDLL(self.lib_path)
-            except OSError as e:
-                print(f"Failed to load {self.name}: {e}"); raise
-            sf = getattr(self.lib, self.start_sym)
-            sf.argtypes = [c_char_p]; sf.restype = c_int
-            self._stop = getattr(self.lib, self.stop_sym)
-            self._stop.argtypes = []; self._stop.restype = c_int
-            def run():
-                try:
-                    r = sf(self.payload.encode('utf-8'))
-                    if r != 0: pass
-                except Exception as e: pass
-            t = threading.Thread(target=run, daemon=True); t.start(); self._running = True
-        except Exception as e: print(f"Failed to start {self.name}: {e}"); raise
-
-    def stop(self):
-        if not self._running or self._stop is None: return
-        try: self._stop(); self._running = False
-        except: pass
-
-def clamp_key(k):
-    if len(k) != 32: raise ValueError('key must be 32 bytes')
-    key = bytearray(k); key[0] &= 248; key[31] &= 127; key[31] |= 64; return bytes(key)
-
-def b64url(data): return base64.urlsafe_b64encode(data).decode().rstrip('=')
-
-def deb64(v):
-    v = v.strip()
-    if not re.fullmatch(r'[A-Za-z0-9_-]+', v): raise ValueError('invalid base64url')
-    return base64.urlsafe_b64decode(v + '=' * ((4 - len(v) % 4) % 4))
-
-def x25519_py(priv, pub):
-    P = 2**255 - 19; A24 = 121665
-    def dec(s): return sum(s[i] << (8*i) for i in range(32))
-    def enc(n): return bytes((n >> (8*i)) & 0xff for i in range(32))
-    def csw(swap, x2, x3): d = swap * (x2 - x3); return x2 - d, x3 + d
-    k = clamp_key(priv); u = dec(pub)
-    x1 = u; x2 = 1; z2 = 0; x3 = x1; z3 = 1; swap = 0
-    for t in range(254, -1, -1):
-        kt = (k[t//8] >> (t%8)) & 1; swap ^= kt
-        x2, x3 = csw(swap, x2, x3); z2, z3 = csw(swap, z2, z3); swap = kt
-        A = (x2 + z2) % P; AA = (A*A) % P; B = (x2 - z2) % P; BB = (B*B) % P; E = (AA - BB) % P
-        C = (x3 + z3) % P; D = (x3 - z3) % P; DA = (D*A) % P; CB = (C*B) % P
-        x3 = ((DA+CB)*(DA+CB)) % P; z3 = (x1 * ((DA-CB)*(DA-CB) % P)) % P
-        x2 = (AA*BB) % P; z2 = (E * ((AA + (A24*E) % P) % P)) % P
-    x2, x3 = csw(swap, x2, x3); z2, z3 = csw(swap, z2, z3)
-    return enc((x2 * pow(z2, P-2, P)) % P)
-
-def derive_pub(priv_bytes):
-    priv_bytes = clamp_key(priv_bytes)
-    if HAS_CRYPTO:
-        k = x25519.X25519PrivateKey.from_private_bytes(priv_bytes)
-        return k.public_key().public_bytes(encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw)
-    return x25519_py(priv_bytes, bytes([9] + [0]*31))
-
-def gen_keypair():
-    priv = clamp_key(secrets.token_bytes(32))
-    pub = derive_pub(priv)
-    return {'privateKey': b64url(priv), 'publicKey': b64url(pub)}
+        return 'config'
+    return 'token'
 
 def write_keys(pk, puk):
     os.makedirs(os.path.dirname(idStore), exist_ok=True)
@@ -287,31 +184,43 @@ def load_keys():
     global privKey, pubKey
     if os.path.exists(idStore):
         with open(idStore, 'r') as f: c = f.read()
-        pm = re.search(r'PrivateKey:\s*(.*)', c); pum = re.search(r'PublicKey:\s*(.*)', c)
+        pm = re.search(r'PrivateKey:\s*(.*)', c)
+        pum = re.search(r'PublicKey:\s*(.*)', c)
         if pm and pum:
-            try:
-                lp = deb64(pm.group(1)); lpub = deb64(pum.group(1))
-                np = clamp_key(lp); dp = derive_pub(np)
-                if len(lpub) != 32 or dp != lpub: raise ValueError('key mismatch')
-                privKey = b64url(np); pubKey = b64url(dp)
-                if privKey != pm.group(1).strip() or pubKey != pum.group(1).strip(): write_keys(privKey, pubKey)
-                return
-            except Exception as e: print(f'Regenerating keys: {e}')
-    p = gen_keypair(); privKey = p['privateKey']; pubKey = p['publicKey']; write_keys(privKey, pubKey)
-
-FALLBACK_KEY = '''-----BEGIN EC PARAMETERS-----\nBggqhkjOPQMBBw==\n-----END EC PARAMETERS-----\n-----BEGIN EC PRIVATE KEY-----\nMHcCAQEEIM4792SEtPqIt1ywqTd/0bYidBqpYV/++siNnfBYsdUYoAoGCCqGSM49\nAwEHoUQDQgAE1kHafPj07rJG+HboH2ekAI4r+e6TL38GWASANnngZreoQDF16ARa\n/TsyLyFoPkhLxSbehH/NBEjHtSZGaDhMqQ==\n-----END EC PRIVATE KEY-----\n'''
-FALLBACK_CRT = '''-----BEGIN CERTIFICATE-----\nMIIBejCCASGgAwIBAgIUfWeQL3556PNJLp/veCFxGNj9crkwCgYIKoZIzj0EAwIw\nEzERMA8GA1UEAwwIYmluZy5jb20wHhcNMjUwOTE4MTgyMDIyWhcNMzUwOTE2MTgy\nMDIyWjATMREwDwYDVQQDDAhiaW5nLmNvbTBZMBMGByqGSM49AgEGCCqGSM49AwEH\nA0IABNZB2nz49O6yRvh26B9npACOK/nuky9/BlgEgDZ54Ga3qEAxdegEWv07Mi8h\naD5IS8Um3oR/zQRIx7UmRmg4TKmjUzBRMB0GA1UdDgQWBBTV1cFID7UISE7PLTBR\nBfGbgkrMNzAfBgNVHSMEGDAWgBTV1cFID7UISE7PLTBRBfGbgkrMNzAPBgNVHRMB\nAf8EBTADAQH/MAoGCCqGSM49BAMCA0cAMEQCIAIDAJvg0vd/ytrQVvEcSm6XTlB+\neQ6OFb9LbLYL9f+sAiAffoMbi4y/0YUSlTtz7as9S8/lciBF5VCUoVIKS+vX2g==\n-----END CERTIFICATE-----\n'''
+            privKey = pm.group(1).strip()
+            pubKey = pum.group(1).strip()
+            return
+    if not HAS_CRYPTO:
+        logError('cryptography library required for Reality key generation')
+        return
+    from cryptography.hazmat.primitives.asymmetric import x25519
+    from cryptography.hazmat.primitives import serialization
+    priv = x25519.X25519PrivateKey.generate()
+    priv_bytes = priv.private_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PrivateFormat.Raw,
+        encryption_algorithm=serialization.NoEncryption()
+    )
+    pub_bytes = priv.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw
+    )
+    privKey = base64.urlsafe_b64encode(priv_bytes).decode().rstrip('=')
+    pubKey = base64.urlsafe_b64encode(pub_bytes).decode().rstrip('=')
+    write_keys(privKey, pubKey)
 
 def valid_cert_pair(cert, key):
     if not os.path.exists(cert) or not os.path.exists(key): return False
     try:
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); ctx.load_cert_chain(certfile=cert, keyfile=key); return True
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(certfile=cert, keyfile=key)
+        return True
     except: return False
 
-def ensure_certs(cert_p, key_p):
-    if os.path.exists(cert_p) and os.path.exists(key_p) and valid_cert_pair(cert_p, key_p): return
-    os.makedirs(os.path.dirname(cert_p), exist_ok=True)
-    tc, tk = f'{cert_p}.tmp', f'{key_p}.tmp'
+def ensure_certs():
+    if os.path.exists(certPath) and os.path.exists(keyPath) and valid_cert_pair(certPath, keyPath): return
+    os.makedirs(os.path.dirname(certPath), exist_ok=True)
+    tc, tk = f'{certPath}.tmp', f'{keyPath}.tmp'
     for p in (tc, tk):
         try:
             if os.path.exists(p): os.unlink(p)
@@ -320,17 +229,16 @@ def ensure_certs(cert_p, key_p):
         subprocess.run(['openssl', 'version'], capture_output=True, check=True)
         subprocess.run(['openssl', 'ecparam', '-genkey', '-name', 'prime256v1', '-out', tk], capture_output=True, check=True)
         subprocess.run(['openssl', 'req', '-new', '-x509', '-days', '3650', '-key', tk, '-out', tc, '-subj', '/CN=bing.com'], capture_output=True, check=True)
-        if valid_cert_pair(tc, tk): os.replace(tc, cert_p); os.replace(tk, key_p); return
+        if valid_cert_pair(tc, tk): os.replace(tc, certPath); os.replace(tk, keyPath); return
     except: pass
     for p in (tc, tk):
         try:
             if os.path.exists(p): os.unlink(p)
         except: pass
-    write_secure(key_p, FALLBACK_KEY)
-    write_secure(cert_p, FALLBACK_CRT)
-    if not valid_cert_pair(cert_p, key_p): raise RuntimeError('failed to create TLS cert pair')
+    logError('openssl not available - TLS cert generation failed')
+    sys.exit(1)
 
-def build_config(cert_p, key_p):
+def build_config():
     inbound = []
     inbound.append({'type': 'vmess', 'tag': 'vmess-ws-in', 'listen': '::', 'listen_port': TUN_PORT,
         'users': [{'uuid': SESSION_ID}], 'transport': {'type': 'ws', 'path': '/vmess-argo', 'early_data_header_name': 'Sec-WebSocket-Protocol'}})
@@ -342,17 +250,17 @@ def build_config(cert_p, key_p):
     if valid_port(HY2_EDGE):
         inbound.append({'type': 'hysteria2', 'tag': 'hysteria-in', 'listen': '::', 'listen_port': int(HY2_EDGE),
             'users': [{'password': SESSION_ID}], 'masquerade': 'https://bing.com',
-            'tls': {'enabled': True, 'alpn': ['h3'], 'certificate_path': cert_p, 'key_path': key_p}})
+            'tls': {'enabled': True, 'alpn': ['h3'], 'certificate_path': certPath, 'key_path': keyPath}})
     if valid_port(TUIC_EDGE):
         inbound.append({'type': 'tuic', 'tag': 'tuic-in', 'listen': '::', 'listen_port': int(TUIC_EDGE),
             'users': [{'uuid': SESSION_ID, 'password': SESSION_ID}], 'congestion_control': 'bbr',
-            'tls': {'enabled': True, 'alpn': ['h3'], 'certificate_path': cert_p, 'key_path': key_p}})
+            'tls': {'enabled': True, 'alpn': ['h3'], 'certificate_path': certPath, 'key_path': keyPath}})
     if valid_port(S5_EDGE):
         inbound.append({'type': 'socks', 'tag': 's5-in', 'listen': '::', 'listen_port': int(S5_EDGE),
             'users': [{'username': SESSION_ID[:8], 'password': SESSION_ID[-12:]}]})
     if valid_port(TLS_EDGE):
         inbound.append({'type': 'anytls', 'tag': 'anytls-in', 'listen': '::', 'listen_port': int(TLS_EDGE),
-            'users': [{'password': SESSION_ID}], 'tls': {'enabled': True, 'certificate_path': cert_p, 'key_path': key_p}})
+            'users': [{'password': SESSION_ID}], 'tls': {'enabled': True, 'certificate_path': certPath, 'key_path': keyPath}})
     ep = [{'type': 'wireguard', 'tag': 'wireguard-out', 'mtu': 1280,
         'address': ['172.16.0.2/32', '2606:4700:110:8dfe:d141:69bb:6b80:925/128'],
         'private_key': 'YFYOAdbw1bKTHlNNi+aEjBM3BO7unuFC5rOkMRAz9XY=',
@@ -373,35 +281,10 @@ def build_config(cert_p, key_p):
         rules.append({'tag': 'youtube', 'type': 'remote', 'format': 'binary',
             'url': 'https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/youtube.srs'})
         wg.append('youtube')
-    return {'log': {'disabled': True, 'level': 'error', 'timestamp': True}, 'http_clients': [{'tag': 'http-client-direct'}],
+    return {'log': {'disabled': True, 'level': 'error', 'timestamp': True},
         'inbounds': inbound, 'endpoints': ep, 'outbounds': [{'type': 'direct', 'tag': 'direct'}],
-        'route': {'default_http_client': 'http-client-direct', 'rule_set': rules,
+        'route': {'rule_set': rules,
             'rules': [{'rule_set': wg, 'outbound': 'wireguard-out'}], 'final': 'direct'}}
-
-def wait_domain(log, timeout_ms):
-    dl = time.time() + timeout_ms / 1000
-    last = ''
-    while time.time() < dl:
-        try:
-            if os.path.exists(log):
-                with open(log, 'r') as f: c = f.read()
-                if c != last:
-                    last = c; m = re.findall(r'https://([A-Za-z0-9.-]+\.trycloudflare\.com)', c)
-                    if m: return m[-1]
-        except: pass
-        time.sleep(1)
-    return None
-
-def resolve_endpoint():
-    if NO_TUN: return None
-    if TUN_AUTH and TUN_DOMAIN: return TUN_DOMAIN
-    d = wait_domain(tunLog, 30000)
-    if not d:
-        try: os.unlink(tunLog)
-        except: pass
-        time.sleep(5)
-        d = wait_domain(tunLog, 30000)
-    return d
 
 def get_isp():
     try:
@@ -493,6 +376,88 @@ def dummy_traffic():
         except: pass
         time.sleep(3 + random.random() * 4)
 
+def download_binary(url, dest):
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    tmp = dest + '.dl'
+    log(f'Downloading {url}')
+    r = requests.get(url, stream=True, timeout=180)
+    r.raise_for_status()
+    with open(tmp, 'wb') as f:
+        for chunk in r.iter_content(8192):
+            f.write(chunk)
+    os.chmod(tmp, 0o755)
+    os.replace(tmp, dest)
+    log(f'Saved {dest}')
+    return dest
+
+def ensure_singbox(bin_dir):
+    sb_bin = os.path.join(bin_dir, 'sing-box')
+    if os.path.exists(sb_bin):
+        return sb_bin
+    url = f'https://github.com/SagerNet/sing-box/releases/download/v{SB_VERSION}/sing-box-{SB_VERSION}-linux-{ARCH}.tar.gz'
+    tar_path = os.path.join(WORK_DIR, 'sing-box.tar.gz')
+    log(f'Downloading sing-box v{SB_VERSION}...')
+    download_binary(url, tar_path)
+    subprocess.run(['tar', '-xzf', tar_path, '-C', bin_dir, f'--strip-components=1', f'sing-box-{SB_VERSION}-linux-{ARCH}/sing-box'], capture_output=True, check=True)
+    os.unlink(tar_path)
+    os.chmod(sb_bin, 0o755)
+    log('sing-box binary ready')
+    return sb_bin
+
+def ensure_cloudflared(bin_dir):
+    cf_bin = os.path.join(bin_dir, 'cloudflared')
+    if os.path.exists(cf_bin):
+        return cf_bin
+    url = f'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-{ARCH}'
+    log('Downloading cloudflared...')
+    download_binary(url, cf_bin)
+    log('cloudflared binary ready')
+    return cf_bin
+
+children = []
+trycloudflare_domain = None
+
+def start_process(name, bin_path, args):
+    proc = subprocess.Popen([bin_path] + args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    children.append(proc)
+
+    def read_stdout():
+        for line in iter(proc.stdout.readline, b''):
+            if line:
+                log(f'[{name}] {line.decode().strip()}')
+    def read_stderr():
+        global trycloudflare_domain
+        for line in iter(proc.stderr.readline, b''):
+            if line:
+                text = line.decode()
+                m = re.search(r'https://([A-Za-z0-9.-]+\.trycloudflare\.com)', text)
+                if m:
+                    trycloudflare_domain = m.group(1)
+                log(f'[{name}] {text.strip()}')
+
+    threading.Thread(target=read_stdout, daemon=True).start()
+    threading.Thread(target=read_stderr, daemon=True).start()
+    return proc
+
+def stop_all(signum=None, frame=None):
+    for p in children:
+        try: p.terminate()
+        except: pass
+    time.sleep(2)
+    for p in children:
+        try: p.kill()
+        except: pass
+    sys.exit(0)
+
+def wait_for_endpoint(timeout_ms):
+    if TUN_DOMAIN: return TUN_DOMAIN
+    deadline = time.time() + timeout_ms / 1000
+    while time.time() < deadline:
+        if trycloudflare_domain:
+            return trycloudflare_domain
+        time.sleep(1)
+    return None
+
 class Handler(BaseHTTPRequestHandler):
     svc_data = ''
     def do_GET(self):
@@ -501,78 +466,154 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'text/plain; charset=utf-8')
             self.end_headers()
             self.wfile.write(base64.b64encode(self.svc_data.encode()).encode())
+        elif self.path == '/debug':
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/plain; charset=utf-8')
+            self.end_headers()
+            try:
+                with open(logFile, 'r') as f:
+                    self.wfile.write(f.read().encode('utf-8'))
+            except:
+                self.wfile.write(b'debug.log not available yet')
         elif self.path == '/':
             self.send_response(200)
             self.send_header('Content-Type', 'text/html; charset=utf-8')
             self.end_headers()
             try:
-                with open(os.path.join(ROOT, 'index.html'), 'r', encoding='utf-8') as f: self.wfile.write(f.read().encode('utf-8'))
-            except: self.wfile.write(b'<!DOCTYPE html><html><head><meta charset="utf-8"><title>Service</title></head><body><h1>Service Running</h1></body></html>')
+                with open(os.path.join(ROOT, 'index.html'), 'r', encoding='utf-8') as f:
+                    self.wfile.write(f.read().encode('utf-8'))
+            except:
+                self.wfile.write(b'<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Welcome</title><style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#fafafa;color:#333}div{text-align:center;max-width:500px;padding:20px}h1{font-size:2.5rem;font-weight:300;margin:0 0 8px;color:#444}p{color:#777;line-height:1.6}</style></head><body><div><h1>Service Running</h1><p>This server is running normally.</p></div></body></html>')
         else:
-            self.send_response(404); self.end_headers(); self.wfile.write(b'Not Found')
+            self.send_response(404)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(b'<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>404</title><style>body{font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#f5f5f5;color:#333}div{text-align:center}h1{font-size:5rem;font-weight:300;margin:0;color:#999}p{color:#999}</style></head><body><div><h1>404</h1><p>Not Found</p></div></body></html>')
     def log_message(self, fmt, *args): pass
 
 def start_http(svc_data, port):
     Handler.svc_data = svc_data
     try:
         srv = HTTPServer(('0.0.0.0', port), Handler)
-        t = threading.Thread(target=srv.serve_forever, daemon=True); t.start(); return srv
+        t = threading.Thread(target=srv.serve_forever, daemon=True)
+        t.start()
+        return srv
     except OSError as e:
-        if e.errno == 98: raise Exception(f'Port {port} in use') from e
-        else: raise
+        if e.errno == 98:
+            raise Exception(f'Port {port} in use') from e
+        else:
+            raise
 
 def bootstrap():
-    global privKey, pubKey
-    remove_remote()
-    if not os.path.exists(WORK_DIR): os.makedirs(WORK_DIR, exist_ok=True)
+    log('=== bootstrap started ===')
+    bin_dir = os.path.join(WORK_DIR, 'bin')
+    os.makedirs(bin_dir, exist_ok=True)
+    if not os.path.exists(WORK_DIR):
+        os.makedirs(WORK_DIR, exist_ok=True)
     purge_old()
-    setup_tunnel()
-    core_url = f'https://github.com/krisxu23/sing-box/releases/download/libsingbox-latest/sbx-{ARCH}.so'
-    tun_url = f'https://github.com/krisxu23/cloudflared/releases/download/latest/bot-{ARCH}.so'
-    core_lib = fetch_lib(core_url, 'helper_module.bin')
-    tun_lib = None
-    if not NO_TUN: tun_lib = fetch_lib(tun_url, 'network_helper.bin')
-    if valid_port(REALM_EDGE): load_keys()
-    cert = os.path.join(WORK_DIR, 'tls.crt'); key = os.path.join(WORK_DIR, 'tls.key')
-    if HY2_EDGE or TUIC_EDGE or TLS_EDGE: ensure_certs(cert, key)
-    cfg = build_config(cert, key)
-    write_secure(svcConfig, json.dumps(cfg))
-    svcs = []
-    core = NativeSvc('core', core_lib, 'initNetworkStack', 'shutdownNetworkStack', svc_payload())
-    svcs.append(core)
-    tun = None
-    if tun_lib:
-        p = tun_payload()
-        if p: tun = NativeSvc('tun', tun_lib, 'initTunnelRelay', 'shutdownTunnelRelay', p); svcs.append(tun)
+    remove_remote()
 
-    def stop_all():
-        for s in reversed(svcs):
-            try: s.stop()
-            except: pass
-        sys.exit(0)
+    log(f'UUID set: {bool(SESSION_ID)}')
+    log(f'ARGO_AUTH set: {bool(TUN_AUTH)}')
+    log(f'ARGO_DOMAIN: {TUN_DOMAIN or "(none)"}')
+    log(f'REALITY_PORT: {REALM_EDGE or "(none)"}')
+    log(f'HY2_PORT: {HY2_EDGE or "(none)"}')
+    log(f'TUIC_PORT: {TUIC_EDGE or "(none)"}')
 
-    signal.signal(signal.SIGINT, lambda s, f: stop_all())
-    signal.signal(signal.SIGTERM, lambda s, f: stop_all())
-    for s in svcs: s.start()
-    time.sleep(1)
+    sb_bin = None
+    try:
+        sb_bin = ensure_singbox(bin_dir)
+    except Exception as e:
+        logError(f'sing-box download failed: {e}')
+
+    cf_bin = None
+    if not NO_TUN:
+        try:
+            cf_bin = ensure_cloudflared(bin_dir)
+        except Exception as e:
+            logError(f'cloudflared download failed: {e}')
+
+    if valid_port(REALM_EDGE):
+        load_keys()
+
+    needs_tls = HY2_EDGE or TUIC_EDGE or TLS_EDGE
+    if needs_tls:
+        ensure_certs()
+
+    cfg = build_config()
+    os.makedirs(os.path.dirname(cfgPath), exist_ok=True)
+    with open(cfgPath, 'w') as f:
+        json.dump(cfg, f, indent=2)
+    log('sing-box config written')
+
+    if sb_bin:
+        start_process('sing-box', sb_bin, ['run', '-c', cfgPath])
+    else:
+        logError('sing-box binary not available - proxy will not start')
+
+    if cf_bin:
+        if TUN_AUTH:
+            if re.match(r'^[A-Z0-9a-z=]{120,250}$', TUN_AUTH):
+                start_process('cloudflared', cf_bin, ['tunnel', '--no-autoupdate', 'run', '--token', TUN_AUTH])
+            elif 'TunnelSecret' in TUN_AUTH:
+                setup_tunnel()
+                start_process('cloudflared', cf_bin, ['tunnel', '--config', os.path.join(WORK_DIR, 'conn_config.yml'), 'run'])
+        else:
+            proc = subprocess.Popen([cf_bin, 'tunnel', '--url', f'http://localhost:{TUN_PORT}'],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            children.append(proc)
+
+            def read_cf_stdout():
+                for line in iter(proc.stdout.readline, b''):
+                    if line:
+                        log(f'[cloudflared] {line.decode().strip()}')
+            def read_cf_stderr():
+                global trycloudflare_domain
+                for line in iter(proc.stderr.readline, b''):
+                    if line:
+                        text = line.decode()
+                        m = re.search(r'https://([A-Za-z0-9.-]+\.trycloudflare\.com)', text)
+                        if m:
+                            trycloudflare_domain = m.group(1)
+                        log(f'[cloudflared] {text.strip()}')
+
+            threading.Thread(target=read_cf_stdout, daemon=True).start()
+            threading.Thread(target=read_cf_stderr, daemon=True).start()
+    else:
+        log('cloudflared binary not available - Argo tunnel will not start')
+
+    signal.signal(signal.SIGINT, stop_all)
+    signal.signal(signal.SIGTERM, stop_all)
+
     time.sleep(5)
-    ep = resolve_endpoint()
-    svc_data = build_peers(ep)
+    endpoint = wait_for_endpoint(30000)
+    log(f'endpoint: {endpoint or "(none)"}')
+
+    svc_data = build_peers(endpoint)
+    log('subscription built, starting HTTP server')
     http_srv = start_http(svc_data, HTTP_SVC_PORT)
-    notify_tg(); sync_remote(); ping_keep()
+
+    sub_url = f'{PUBLIC_URL}/{syncPath}' if PUBLIC_URL else '(not set)'
+    log(f'subscription URL: {sub_url}')
+    notify_tg()
+    sync_remote()
+    ping_keep()
+    log('=== bootstrap complete ===')
+
     threading.Thread(target=dummy_traffic, daemon=True).start()
 
     def delayed():
         time.sleep(45)
         cleanup(keep_data=True)
         clr()
-
     threading.Thread(target=delayed, daemon=True).start()
+
     try:
         while True: time.sleep(1)
     except KeyboardInterrupt:
         stop_all()
-        if http_srv: http_srv.shutdown()
+        if http_srv:
+            http_srv.shutdown()
 
 if __name__ == '__main__':
     bootstrap()
