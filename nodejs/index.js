@@ -6,8 +6,7 @@ const os = require('os');
 const http = require('http');
 const crypto = require('crypto');
 const axios = require('axios');
-const koffi = require('koffi');
-const { execSync } = require('child_process');
+const { spawn, execSync } = require('child_process');
 
 try { require('dotenv').config(); } catch {}
 
@@ -50,9 +49,6 @@ Object.entries(coverEnv).forEach(([k, v]) => { process.env[k] = v; });
 
 const ROOT = process.cwd();
 const WORK_DIR = path.resolve(ROOT, WORK_DIR_BASE);
-const libCache = WORK_DIR;
-const svcConfig = path.resolve(WORK_DIR, 'cache_store.bin');
-const tunLog = path.resolve(WORK_DIR, 'network_trace.log');
 const encData = path.resolve(WORK_DIR, 'session_store.dat');
 const peerList = path.resolve(WORK_DIR, 'route_table.cache');
 const idStore = path.resolve(WORK_DIR, 'node_identity.key');
@@ -66,19 +62,6 @@ const arch = (() => {
 
 let privKey = '';
 let pubKey = '';
-
-const XOR_KEY = crypto.randomBytes(32);
-
-function xorEncode(data) {
-  const b = Buffer.from(data, 'utf8');
-  for (let i = 0; i < b.length; i++) b[i] ^= XOR_KEY[i % XOR_KEY.length];
-  return b.toString('base64');
-}
-function xorDecode(encoded) {
-  const b = Buffer.from(encoded, 'base64');
-  for (let i = 0; i < b.length; i++) b[i] ^= XOR_KEY[i % XOR_KEY.length];
-  return b.toString('utf8');
-}
 
 function writeSecure(path, data) {
   fs.writeFileSync(path, data, { mode: 0o600 });
@@ -170,75 +153,37 @@ function setupTunnel() {
   }
 }
 
-async function sha256Match(fp, exp) {
-  if (!exp) return true;
-  const a = await sha256(fp);
-  return a.toLowerCase() === exp.toLowerCase();
-}
-
-function sha256(fp) {
-  return new Promise((resolve, reject) => {
-    const h = crypto.createHash('sha256');
-    const s = fs.createReadStream(fp);
-    s.on('data', c => h.update(c));
-    s.on('end', () => resolve(h.digest('hex')));
-    s.on('error', reject);
-  });
-}
-
-function patchBinary(buf, replacements) {
-  for (const [from, to] of replacements) {
-    if (from.length !== to.length) continue;
-    const fromB = Buffer.from(from, 'utf8');
-    const toB = Buffer.from(to, 'utf8');
-    let idx = -1;
-    while ((idx = buf.indexOf(fromB, idx + 1)) !== -1) {
-      toB.copy(buf, idx);
-    }
-  }
-}
-
-async function fetchLib(url, name, expectedSha) {
-  const t = path.resolve(libCache, name);
-  if (fs.existsSync(t) && await sha256Match(t, expectedSha)) {
-    return t;
-  }
-  await fs.promises.mkdir(libCache, { recursive: true });
-  const tmp = path.resolve(libCache, `${name}.dl`);
+async function downloadBinary(url, dest) {
+  const dir = path.dirname(dest);
+  await fs.promises.mkdir(dir, { recursive: true });
+  const tmp = dest + '.dl';
   const w = fs.createWriteStream(tmp);
   const r = await axios.get(url, { responseType: 'stream', timeout: 3 * 60 * 1000 });
   if (r.status < 200 || r.status >= 300) throw new Error(`HTTP ${r.status} for ${url}`);
   r.data.pipe(w);
   await new Promise((resolve, reject) => w.on('finish', resolve).on('error', reject));
-  if (!(await sha256Match(tmp, expectedSha))) throw new Error(`SHA-256 mismatch for ${tmp}`);
-  const raw = fs.readFileSync(tmp);
-  patchBinary(raw, [
-    ['sing-box', 'net-hlpr'],
-    ['cloudflared', 'edge-relayd']
-  ]);
-  fs.writeFileSync(t, raw, { mode: 0o600 });
-  fs.unlinkSync(tmp);
-  return t;
+  fs.chmodSync(tmp, 0o755);
+  fs.renameSync(tmp, dest);
+  return dest;
 }
 
-function makeService(name, libPath, startSym, stopSym, payload) {
-  let lib;
-  try { lib = koffi.load(libPath); } catch (e) { console.error(`${name} native library load failed: ${e.message}`); throw e; }
-  const start = lib.func(`int ${startSym}(str)`);
-  const stop = lib.func(`int ${stopSym}()`);
-  return {
-    name,
-    start: () => {
-      start.async(payload || '', (err, code) => {
-        if (err) console.error(`${name} error: ${err.message}`);
-        else if (code !== 0) console.warn(`${name} exit code ${code}`);
-      });
-    },
-    stop: () => new Promise((resolve, reject) => {
-      try { stop.async((err, code) => { if (err) reject(err); else resolve(code); }); }
-      catch (error) { resolve(-1); }
-    })
-  };
+const children = [];
+
+function startProcess(name, binPath, args) {
+  const proc = spawn(binPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  children.push(proc);
+  proc.stdout.on('data', d => log(`[${name}] ${d.toString().trim()}`));
+  proc.stderr.on('data', d => log(`[${name}] ${d.toString().trim()}`));
+  proc.on('error', err => logError(`${name} error: ${err.message}`));
+  proc.on('exit', (code, sig) => log(`${name} exited [code=${code}, sig=${sig}]`));
+  return proc;
+}
+
+async function stopAll() {
+  children.forEach(p => { try { p.kill('SIGTERM'); } catch {} });
+  await new Promise(r => setTimeout(r, 2000));
+  children.forEach(p => { try { p.kill('SIGKILL'); } catch {} });
+  process.exit(0);
 }
 
 const X25519_P = (1n << 255n) - 19n;
@@ -426,47 +371,16 @@ function buildProxyConfig(certP, keyP) {
   };
 }
 
-function tunPayload() {
-  if (NO_TUN === 'true' || NO_TUN === true) return null;
-  if (TUN_AUTH && TUN_DOMAIN) {
-    if (TUN_AUTH.match(/^[A-Z0-9a-z=]{120,250}$/)) {
-      return JSON.stringify({ args: ['tunnel', '--edge-ip-version', 'auto', '--no-autoupdate', '--protocol', 'http2', 'run', '--token', TUN_AUTH] });
-    } else if (TUN_AUTH.match(/TunnelSecret/)) {
-      return JSON.stringify({ args: ['tunnel', '--edge-ip-version', 'auto', '--config', path.join(WORK_DIR, 'conn_config.yml'), 'run'] });
-    }
-  }
-  return JSON.stringify({ args: ['tunnel', '--edge-ip-version', 'auto', '--no-autoupdate', '--protocol', 'http2', '--logfile', tunLog, '--loglevel', 'info', '--url', `http://localhost:${TUN_PORT}`] });
-}
+let trycloudflareDomain = null;
 
-function svcPayload() { return JSON.stringify({ config: svcConfig, workingDir: '.', disableColor: true }); }
-
-function waitForDomain(logPath, timeoutMs) {
-  const dl = Date.now() + timeoutMs;
-  while (Date.now() < dl) {
-    try {
-      if (fs.existsSync(logPath)) {
-        const c = fs.readFileSync(logPath, 'utf8');
-        const m = [...c.matchAll(/https:\/\/([A-Za-z0-9.-]+\.trycloudflare\.com)/g)];
-        if (m.length > 0) return m[m.length - 1][1];
-      }
-    } catch {}
-    const rem = dl - Date.now();
-    if (rem <= 0) break;
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.min(1000, rem));
+async function waitForEndpoint(timeoutMs) {
+  if (TUN_DOMAIN) return TUN_DOMAIN;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (trycloudflareDomain) return trycloudflareDomain;
+    await new Promise(r => setTimeout(r, 1000));
   }
   return null;
-}
-
-async function resolveEndpoint() {
-  if (NO_TUN === 'true' || NO_TUN === true) return null;
-  if (TUN_AUTH && TUN_DOMAIN) { return TUN_DOMAIN; }
-  let d = waitForDomain(tunLog, 30000);
-  if (!d) {
-    try { fs.unlinkSync(tunLog); } catch {}
-    await new Promise(r => setTimeout(r, 5000));
-    d = waitForDomain(tunLog, 30000);
-  }
-  return d;
 }
 
 async function getISP() {
@@ -588,61 +502,95 @@ function startHTTP(svcData) {
   tryListen(HTTP_SVC_PORT, 5);
 }
 
-async function bootstrap() {
-  removeRemoteNodes();
+async function ensureSingBox(binDir) {
+  const sbBin = path.join(binDir, 'sing-box');
+  if (fs.existsSync(sbBin)) return sbBin;
+  const version = process.env.SB_VERSION || '1.11.6';
+  const url = `https://github.com/SagerNet/sing-box/releases/download/v${version}/sing-box-${version}-linux-${arch}.tar.gz`;
+  const tarPath = path.join(WORK_DIR, 'sing-box.tar.gz');
+  log(`Downloading sing-box v${version}...`);
+  await downloadBinary(url, tarPath);
+  execSync(`tar -xzf "${tarPath}" -C "${binDir}" --strip-components=1 sing-box-${version}-linux-${arch}/sing-box 2>/dev/null`, { stdio: 'pipe' });
+  fs.unlinkSync(tarPath);
+  fs.chmodSync(sbBin, 0o755);
+  log('sing-box binary ready');
+  return sbBin;
+}
 
-  if (!fs.existsSync(WORK_DIR)) { fs.mkdirSync(WORK_DIR, { recursive: true }); }
+async function ensureCloudflared(binDir) {
+  const cfBin = path.join(binDir, 'cloudflared');
+  if (fs.existsSync(cfBin)) return cfBin;
+  const url = `https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${arch}`;
+  log('Downloading cloudflared...');
+  await downloadBinary(url, cfBin);
+  log('cloudflared binary ready');
+  return cfBin;
+}
+
+async function bootstrap() {
+  const binDir = path.resolve(WORK_DIR, 'bin');
+  await fs.promises.mkdir(binDir, { recursive: true });
+
+  removeRemoteNodes();
+  if (!fs.existsSync(WORK_DIR)) fs.mkdirSync(WORK_DIR, { recursive: true });
   purgeOld();
 
-  setupTunnel();
+  const sbBin = await ensureSingBox(binDir);
 
-  const coreUrl = `https://github.com/krisxu23/sing-box/releases/download/libsingbox-latest/sbx-${arch}.so`;
-  const tunUrl = `https://github.com/krisxu23/cloudflared/releases/download/latest/bot-${arch}.so`;
-  const coreLib = await fetchLib(coreUrl, 'helper_module.bin');
-  let tunLib = null;
+  let cfBin = null;
+  if (NO_TUN !== 'true' && NO_TUN !== true) {
+    cfBin = await ensureCloudflared(binDir);
+  }
 
-  if (NO_TUN !== 'true' && NO_TUN !== true) { tunLib = await fetchLib(tunUrl, 'network_helper.bin'); }
-
-  if (validPort(REALM_EDGE)) { loadOrCreateKeys(); }
+  if (validPort(REALM_EDGE)) loadOrCreateKeys();
 
   const certPath = path.join(WORK_DIR, 'tls.crt');
   const keyPath = path.join(WORK_DIR, 'tls.key');
   const needsTLS = !!(HY2_EDGE || TUIC_EDGE || TLS_EDGE);
-  if (needsTLS) { ensureCerts(certPath, keyPath); }
+  if (needsTLS) ensureCerts(certPath, keyPath);
 
   const cfg = buildProxyConfig(certPath, keyPath);
-  const rawCfg = JSON.stringify(cfg);
-  writeSecure(svcConfig, rawCfg);
+  const cfgPath = path.join(WORK_DIR, 'config.json');
+  fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+  log('Config written');
 
-  const svcs = [];
+  startProcess('sing-box', sbBin, ['run', '-c', cfgPath]);
 
-  const coreSvc = makeService('core', coreLib, 'initNetworkStack', 'shutdownNetworkStack', svcPayload());
-  svcs.push(coreSvc);
-
-  let tunSvc = null;
-  if (tunLib) { const p = tunPayload(); if (p) { tunSvc = makeService('tun', tunLib, 'initTunnelRelay', 'shutdownTunnelRelay', p); svcs.push(tunSvc); } }
-
-  async function stopAll() {
-    for (let i = svcs.length - 1; i >= 0; i--) { try { await svcs[i].stop(); } catch {} }
-    process.exit(0);
+  if (cfBin) {
+    if (TUN_AUTH) {
+      if (TUN_AUTH.match(/^[A-Z0-9a-z=]{120,250}$/)) {
+        startProcess('cloudflared', cfBin, ['tunnel', '--no-autoupdate', 'run', '--token', TUN_AUTH]);
+      } else if (TUN_AUTH.match(/TunnelSecret/)) {
+        setupTunnel();
+        startProcess('cloudflared', cfBin, ['tunnel', '--config', path.join(WORK_DIR, 'conn_config.yml'), 'run']);
+      }
+    } else {
+      const proc = spawn(cfBin, ['tunnel', '--url', `http://localhost:${TUN_PORT}`], { stdio: ['ignore', 'pipe', 'pipe'] });
+      children.push(proc);
+      proc.stdout.on('data', d => log(`[cloudflared] ${d.toString().trim()}`));
+      proc.stderr.on('data', d => {
+        const text = d.toString();
+        const m = text.match(/https:\/\/([A-Za-z0-9.-]+\.trycloudflare\.com)/);
+        if (m) trycloudflareDomain = m[1];
+        log(`[cloudflared] ${text.trim()}`);
+      });
+      proc.on('error', err => logError(`cloudflared error: ${err.message}`));
+      proc.on('exit', (code, sig) => log(`cloudflared exited [code=${code}, sig=${sig}]`));
+    }
   }
+
   process.on('SIGINT', stopAll);
   process.on('SIGTERM', stopAll);
 
-  svcs.forEach(s => s.start());
-  await new Promise(r => setTimeout(r, 1000));
-
   await new Promise(r => setTimeout(r, 5000));
-  const endpoint = await resolveEndpoint();
+  const endpoint = await waitForEndpoint(30000);
 
   const svcData = await buildPeers(endpoint);
-
   startHTTP(svcData);
 
   await notifyTG();
   await syncRemote();
   await pingKeep();
-
   dummyTraffic();
 
   setTimeout(() => {
