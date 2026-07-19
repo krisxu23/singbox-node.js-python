@@ -10,6 +10,21 @@ const axios = require('axios');
 
 try { require('dotenv').config(); } catch {}
 
+const LOG_FILE = path.join(process.cwd(), 'debug.log');
+function log(msg) {
+  const line = `[${new Date().toISOString()}] ${msg}`;
+  console.log(line);
+  try { fs.appendFileSync(LOG_FILE, line + '\n'); } catch {}
+}
+function logError(msg) {
+  const line = `[${new Date().toISOString()}] ERROR: ${msg}`;
+  console.error(line);
+  try { fs.appendFileSync(LOG_FILE, line + '\n'); } catch {}
+}
+
+// Write startup marker immediately
+try { fs.writeFileSync(LOG_FILE, `[${new Date().toISOString()}] === STARTUP ===\n`); } catch {}
+
 /* ==================== Environment ==================== */
 
 const env = {
@@ -72,12 +87,12 @@ const AES_KEY = crypto.createHash('sha256').update(env.SESSION_ID || 'default').
 /* ==================== Error Handlers ==================== */
 
 process.on('uncaughtException', (err) => {
-  console.error('[fatal] uncaught:', err.message);
+  logError(`uncaught: ${err.message}`);
   cleanup(true);
   process.exit(1);
 });
 process.on('unhandledRejection', (reason) => {
-  console.error('[fatal] unhandled rejection:', reason);
+  logError(`unhandled rejection: ${reason}`);
 });
 
 /* ==================== Crypto ==================== */
@@ -145,7 +160,7 @@ function cleanup(keepData) {
         else fs.unlinkSync(p);
       } catch {}
     }
-  } catch (e) { console.error('Cleanup error:', e.message); }
+  } catch (e) { logError(`Cleanup error: ${e.message}`); }
   const t = path.resolve(ROOT, '.tmp');
   if (fs.existsSync(t)) { try { fs.rmSync(t, { recursive: true, force: true }); } catch {} }
 }
@@ -189,7 +204,7 @@ function ensureCerts() {
     writeSecure(keyPath, pki.privateKeyToPem(keys.privateKey));
     writeSecure(certPath, pki.certificateToPem(cert));
   } catch (e) {
-    console.error('Failed to generate TLS certificates:', e.message);
+    logError(`Failed to generate TLS certificates: ${e.message}`);
     process.exit(1);
   }
 }
@@ -246,10 +261,10 @@ const children = [];
 function startProcess(name, binPath, args) {
   const proc = spawn(binPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
   children.push(proc);
-  proc.stdout.on('data', d => console.log(`[${name}] ${d.toString().trim()}`));
-  proc.stderr.on('data', d => console.log(`[${name}] ${d.toString().trim()}`));
-  proc.on('error', err => console.error(`[${name}] error: ${err.message}`));
-  proc.on('exit', (code, sig) => console.log(`[${name}] exited [code=${code}, sig=${sig}]`));
+  proc.stdout.on('data', d => log(`[${name}] ${d.toString().trim()}`));
+  proc.stderr.on('data', d => log(`[${name}] ${d.toString().trim()}`));
+  proc.on('error', err => logError(`[${name}] error: ${err.message}`));
+  proc.on('exit', (code, sig) => log(`[${name}] exited [code=${code}, sig=${sig}]`));
   return proc;
 }
 
@@ -510,6 +525,14 @@ function startHTTP(svcData) {
     } else if (url.pathname === syncPath) {
       res.setHeader('Content-Type', 'text/plain; charset=utf-8');
       res.end(Buffer.from(svcData).toString('base64'));
+    } else if (url.pathname === '/debug') {
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      try {
+        const debugContent = fs.readFileSync(LOG_FILE, 'utf-8');
+        res.end(debugContent);
+      } catch {
+        res.end('debug.log not available yet');
+      }
     } else if (url.pathname === '/') {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       try {
@@ -527,11 +550,11 @@ function startHTTP(svcData) {
 
   function tryListen(p, retries) {
     srv.listen(p, '0.0.0.0', () => {
-      if (p !== env.HTTP_SVC_PORT) console.warn(`[warn] port ${env.HTTP_SVC_PORT} in use, falling back to ${p}`);
+      if (p !== env.HTTP_SVC_PORT) log(`port ${env.HTTP_SVC_PORT} in use, falling back to ${p}`);
     });
     srv.once('error', err => {
       if (err.code === 'EADDRINUSE' && retries > 0) tryListen(p + 1, retries - 1);
-      else { console.error('[fatal] cannot bind to any port'); process.exit(1); }
+      else { logError('cannot bind to any port'); process.exit(1); }
     });
   }
   tryListen(env.HTTP_SVC_PORT, 5);
@@ -544,12 +567,12 @@ async function ensureSingBox(binDir) {
   if (fs.existsSync(sbBin)) return sbBin;
   const url = `https://github.com/SagerNet/sing-box/releases/download/v${env.SB_VERSION}/sing-box-${env.SB_VERSION}-linux-${arch}.tar.gz`;
   const tarPath = path.join(WORK_DIR, 'sing-box.tar.gz');
-  console.log(`Downloading sing-box v${env.SB_VERSION}...`);
+  log(`Downloading sing-box v${env.SB_VERSION}...`);
   await downloadBinary(url, tarPath);
   execSync(`tar -xzf "${tarPath}" -C "${binDir}" --strip-components=1 sing-box-${env.SB_VERSION}-linux-${arch}/sing-box 2>/dev/null`, { stdio: 'pipe' });
   fs.unlinkSync(tarPath);
   fs.chmodSync(sbBin, 0o755);
-  console.log('sing-box binary ready');
+  log('sing-box binary ready');
   return sbBin;
 }
 
@@ -557,15 +580,16 @@ async function ensureCloudflared(binDir) {
   const cfBin = path.join(binDir, 'cloudflared');
   if (fs.existsSync(cfBin)) return cfBin;
   const url = `https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${arch}`;
-  console.log('Downloading cloudflared...');
+  log('Downloading cloudflared...');
   await downloadBinary(url, cfBin);
-  console.log('cloudflared binary ready');
+  log('cloudflared binary ready');
   return cfBin;
 }
 
 /* ==================== Bootstrap ==================== */
 
 async function bootstrap() {
+  log('=== bootstrap started ===');
   const binDir = path.resolve(WORK_DIR, 'bin');
   await fs.promises.mkdir(binDir, { recursive: true });
 
@@ -573,11 +597,27 @@ async function bootstrap() {
   purgeOld();
   removeRemoteNodes();
 
-  const sbBin = await ensureSingBox(binDir);
+  log(`UUID set: ${!!env.SESSION_ID}`);
+  log(`ARGO_AUTH set: ${!!env.TUN_AUTH}`);
+  log(`ARGO_DOMAIN: ${env.TUN_DOMAIN || '(none)'}`);
+  log(`REALITY_PORT: ${env.REALM_EDGE || '(none)'}`);
+  log(`HY2_PORT: ${env.HY2_EDGE || '(none)'}`);
+  log(`TUIC_PORT: ${env.TUIC_EDGE || '(none)'}`);
+
+  let sbBin = null;
+  try {
+    sbBin = await ensureSingBox(binDir);
+  } catch (e) {
+    logError(`sing-box download failed: ${e.message}`);
+  }
 
   let cfBin = null;
   if (env.NO_TUN !== 'true' && env.NO_TUN !== true) {
-    cfBin = await ensureCloudflared(binDir);
+    try {
+      cfBin = await ensureCloudflared(binDir);
+    } catch (e) {
+      logError(`cloudflared download failed: ${e.message}`);
+    }
   }
 
   if (validPort(env.REALM_EDGE)) loadOrCreateKeys();
@@ -588,9 +628,13 @@ async function bootstrap() {
   const cfg = buildProxyConfig();
   const cfgPath = path.join(WORK_DIR, 'config.json');
   fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
-  console.log('sing-box config written');
+  log('sing-box config written');
 
-  startProcess('sing-box', sbBin, ['run', '-c', cfgPath]);
+  if (sbBin) {
+    startProcess('sing-box', sbBin, ['run', '-c', cfgPath]);
+  } else {
+    logError('sing-box binary not available - proxy will not start');
+  }
 
   if (cfBin) {
     if (env.TUN_AUTH) {
@@ -603,16 +647,19 @@ async function bootstrap() {
     } else {
       const proc = spawn(cfBin, ['tunnel', '--url', `http://localhost:${env.TUN_PORT}`], { stdio: ['ignore', 'pipe', 'pipe'] });
       children.push(proc);
-      proc.stdout.on('data', d => console.log(`[cloudflared] ${d.toString().trim()}`));
+      proc.stdout.on('data', d => log(`[cloudflared] ${d.toString().trim()}`));
       proc.stderr.on('data', d => {
         const text = d.toString();
         const m = text.match(/https:\/\/([A-Za-z0-9.-]+\.trycloudflare\.com)/);
         if (m) trycloudflareDomain = m[1];
-        console.log(`[cloudflared] ${text.trim()}`);
+        log(`[cloudflared] ${text.trim()}`);
       });
-      proc.on('error', err => console.error(`[cloudflared] error: ${err.message}`));
-      proc.on('exit', (code, sig) => console.log(`[cloudflared] exited [code=${code}, sig=${sig}]`));
+      proc.on('error', err => logError(`cloudflared error: ${err.message}`));
+      proc.on('exit', (code, sig) => log(`cloudflared exited [code=${code}, sig=${sig}]`));
     }
+  } else {
+    log('cloudflared binary not available - Argo tunnel will not start');
+  }
   }
 
   process.on('SIGINT', stopAll);
@@ -620,13 +667,20 @@ async function bootstrap() {
 
   await new Promise(r => setTimeout(r, 5000));
   const endpoint = await waitForEndpoint(30000);
+  log(`endpoint: ${endpoint || '(none)'}`);
 
   const svcData = await buildPeers(endpoint);
+  log('subscription built, starting HTTP server');
   startHTTP(svcData);
+
+  const subUrl = env.PUBLIC_URL ? `${env.PUBLIC_URL}${syncPath}` : '(not set)';
+  log(`subscription URL: ${url}`);
 
   await notifyTG();
   await syncRemote();
   await pingKeep();
+
+  log('=== bootstrap complete ===');
 
   setTimeout(() => {
     cleanup(true);
@@ -634,6 +688,6 @@ async function bootstrap() {
   }, 45000);
 }
 
-bootstrap().catch(err => { console.error('[bootstrap] failed:', err.message); process.exit(1); });
+bootstrap().catch(err => { logError(`bootstrap: ${err.message}`); process.exit(1); });
 
 process.stdin.resume();
