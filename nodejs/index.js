@@ -377,11 +377,10 @@ function buildProxyConfig() {
 
   return {
     log: { disabled: true, level: 'error', timestamp: true },
-    http_clients: [{ tag: 'http-client-direct' }],
     inbounds: inbound,
     endpoints: ep,
     outbounds: [{ type: 'direct', tag: 'direct' }],
-    route: { default_http_client: 'http-client-direct', rule_set: rules, rules: [{ rule_set: wgRules, outbound: 'wireguard-out' }], final: 'direct' }
+    route: { rule_set: rules, rules: [{ rule_set: wgRules, outbound: 'wireguard-out' }], final: 'direct' }
   };
 }
 
