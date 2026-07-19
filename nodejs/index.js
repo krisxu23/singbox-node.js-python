@@ -298,9 +298,9 @@ function buildProxyConfig() {
   const inbound = [];
 
   inbound.push({
-    type: 'vless', tag: 'vless-ws-in', listen: '::', listen_port: env.TUN_PORT,
-    users: [{ uuid: env.SESSION_ID, flow: '' }],
-    transport: { type: 'ws', path: '/' }
+    type: 'vmess', tag: 'vmess-ws-in', listen: '::', listen_port: env.TUN_PORT,
+    users: [{ uuid: env.SESSION_ID }],
+    transport: { type: 'ws', path: '/vmess-argo', early_data_header_name: 'Sec-WebSocket-Protocol' }
   });
 
   if (validPort(env.REALM_EDGE)) {
@@ -431,7 +431,11 @@ async function buildPeers(endpoint) {
   let data = '';
 
   if ((env.NO_TUN !== 'true' && env.NO_TUN !== true) && endpoint) {
-    data = `vless://${env.SESSION_ID}@${endpoint}:443?encryption=none&security=tls&sni=${endpoint}&fp=chrome&type=ws&path=%2F%3Fed%3D2560#${tag}-ws-argo`;
+    data = `vmess://${Buffer.from(JSON.stringify({
+      v: '2', ps: tag, add: env.SMART_HOST, port: env.SMART_PORT, id: env.SESSION_ID, aid: '0',
+      scy: 'auto', net: 'ws', type: 'none', host: endpoint,
+      path: '/vmess-argo?ed=2560', tls: 'tls', sni: endpoint, alpn: '', fp: 'firefox'
+    })).toString('base64')}`;
   }
 
   if (validPort(env.TUIC_EDGE)) data += `\ntuic://${env.SESSION_ID}:${env.SESSION_ID}@${svr}:${env.TUIC_EDGE}?sni=www.microsoft.com&congestion_control=bbr&udp_relay_mode=native&alpn=h3&allow_insecure=1#${tag}`;

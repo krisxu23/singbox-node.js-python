@@ -240,8 +240,8 @@ def ensure_certs():
 
 def build_config():
     inbound = []
-    inbound.append({'type': 'vless', 'tag': 'vless-ws-in', 'listen': '::', 'listen_port': TUN_PORT,
-        'users': [{'uuid': SESSION_ID, 'flow': ''}], 'transport': {'type': 'ws', 'path': '/'}})
+    inbound.append({'type': 'vmess', 'tag': 'vmess-ws-in', 'listen': '::', 'listen_port': TUN_PORT,
+        'users': [{'uuid': SESSION_ID}], 'transport': {'type': 'ws', 'path': '/vmess-argo', 'early_data_header_name': 'Sec-WebSocket-Protocol'}})
     if valid_port(REALM_EDGE):
         inbound.append({'type': 'vless', 'tag': 'vless-reality', 'listen': '::', 'listen_port': int(REALM_EDGE),
             'users': [{'uuid': SESSION_ID, 'flow': 'xtls-rprx-vision'}],
@@ -325,7 +325,9 @@ def build_peers(endpoint):
     time.sleep(2)
     data = ''
     if not NO_TUN and endpoint:
-        data = f"vless://{SESSION_ID}@{endpoint}:443?encryption=none&security=tls&sni={endpoint}&fp=chrome&type=ws&path=%2F%3Fed%3D2560#{tag}-ws-argo"
+        c = {'v': '2', 'ps': tag, 'add': SMART_HOST, 'port': SMART_PORT, 'id': SESSION_ID, 'aid': '0', 'scy': 'auto',
+            'net': 'ws', 'type': 'none', 'host': endpoint, 'path': '/vmess-argo?ed=2560', 'tls': 'tls', 'sni': endpoint, 'alpn': '', 'fp': 'firefox'}
+        data = f"vmess://{base64.b64encode(json.dumps(c).encode()).decode()}"
     if valid_port(TUIC_EDGE): data += f"\ntuic://{SESSION_ID}:{SESSION_ID}@{svr}:{TUIC_EDGE}?sni=www.bing.com&congestion_control=bbr&udp_relay_mode=native&alpn=h3&allow_insecure=1#{tag}"
     if valid_port(HY2_EDGE): data += f"\nhysteria2://{SESSION_ID}@{svr}:{HY2_EDGE}/?sni=www.bing.com&insecure=1&alpn=h3&obfs=none#{tag}"
     if valid_port(REALM_EDGE): data += f"\nvless://{SESSION_ID}@{svr}:{REALM_EDGE}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.iij.ad.jp&fp=firefox&pbk={pubKey}&type=tcp&headerType=none#{tag}"
