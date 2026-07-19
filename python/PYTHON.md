@@ -1,26 +1,27 @@
 # Python EdgeConnect
 
-Python CDN 边缘服务模块启动器，单进程无子进程。
+Python 启动器：下载并运行 sing-box + cloudflared 二进制，提供代理订阅服务。
 
 ## 功能
 
-- 下载并缓存原生模块（`helper_module.bin`、`network_helper.bin`）
-- 通过 ctypes 加载核心和隧道网关服务
+- 下载 sing-box 和 cloudflared 二进制并启动
 - 支持 VMess+WS、VLESS Reality、Hysteria2、TUIC、AnyTLS、SOCKS5
 - 自动生成 X25519 密钥对并校验
-- 自动生成 TLS 证书（openssl 不可用时使用内置回退）
-- 通过 HTTP API 暴露端点数据
+- 自动生成 TLS 证书（需 openssl）
+- 通过 HTTP API 暴露订阅数据
 - 可选 TG 推送、远程同步、自动保活
+- 进程守护 — 30 秒健康检查，异常退出自动重启（最多 5 次）
+- 模拟正常流量（定时访问 Google/GitHub 等）
+- 环境变量清理 + Server 头伪装
 
 ## 运行要求
 
 - Python `>=3.9`
 - Linux `amd64` 或 `arm64`
-- 可访问模块下载地址
-- Python 依赖：`requests`、`cryptography`
+- 依赖：`requests`、`cryptography`
 - 可选：`openssl`（用于生成 TLS 证书）
 
-Windows 无法加载 Linux `.so` 文件，请部署在 Linux 环境。
+Windows 无法加载 Linux 二进制，请部署在 Linux 环境。
 
 ## 安装
 
@@ -82,24 +83,22 @@ python3 app.py
 | `TUIC_PORT` | 空 | TUIC 边缘端口 |
 | `ANYTLS_PORT` | 空 | TLS 边缘端口 |
 | `REALITY_PORT` | 空 | REALITY 边缘端口 |
-| `CFIP` | `saas.sin.fan` | 智能路由地址 |
-| `CFPORT` | `443` | 智能路由端口 |
+| `CFIP` | `saas.sin.fan` | 优选路由地址 |
+| `CFPORT` | `443` | 优选路由端口 |
 | `PORT` | `3000` | HTTP 服务端口 |
 | `NAME` | 空 | 节点名称前缀 |
 | `CHAT_ID` | 空 | Telegram 聊天 ID |
 | `BOT_TOKEN` | 空 | Telegram 机器人令牌 |
-| `DISABLE_ARGO` | `false` | 禁用隧道网关 |
+| `DISABLE_ARGO` | `false` | 禁用隧道 |
 
 ## 获取节点
 
-运行成功后，节点订阅信息可通过以下方式获取：
-
 | 方式 | 说明 |
 | --- | --- |
-| **HTTP API** | `http://<容器IP>:<PORT>/<SUB_PATH>`（默认 `http://ip:3000/update`），返回 base64 订阅数据，可直接导入客户端 |
-| **本地文件** | `session_store.dat` — base64 编码的订阅数据；`route_table.cache` — 明文节点链接列表（均在 `FILE_PATH` 目录下） |
-| **Telegram 推送** | 配置 `CHAT_ID` + `BOT_TOKEN` 后自动推送到 Telegram |
-| **远程同步** | 配置 `UPLOAD_URL` 后自动同步到远程端点 |
+| **HTTP API** | `http://<容器IP>:<PORT>/<SUB_PATH>`（默认 `http://ip:3000/update`），返回 base64 订阅数据 |
+| **本地文件** | `session_store.dat` — base64 编码订阅数据；`route_table.cache` — AES 加密节点列表 |
+| **Telegram** | 配置 `CHAT_ID` + `BOT_TOKEN` 后自动推送 |
+| **远程同步** | 配置 `UPLOAD_URL` 后自动同步 |
 
 ## 运行产物
 
@@ -107,17 +106,11 @@ python3 app.py
 
 | 文件 | 说明 |
 | --- | --- |
-| `cache_store.bin` | 服务配置（XOR 加密） |
-| `network_trace.log` | 隧道网关日志 |
-| `session_store.dat` | base64 编码的节点订阅数据 |
-| `route_table.cache` | 明文节点链接列表 |
+| `session_store.dat` | base64 编码节点订阅数据 |
+| `route_table.cache` | AES 加密节点列表 |
 | `node_identity.key` | X25519 密钥对 |
 | `tls.crt` / `tls.key` | TLS 证书和密钥 |
 | `conn_config.json` / `conn_config.yml` | 隧道连接配置 |
-
-HTTP API：`http://<host>:<PORT>/<SUB_PATH>`
-
-启动后自动清理临时文件，保留 `node_identity.key` 和 `session_store.dat`。
 
 ## 身份密钥
 

@@ -5,6 +5,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 try:
     from cryptography.hazmat.primitives.asymmetric import x25519
     from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     HAS_CRYPTO = True
 except ImportError:
     HAS_CRYPTO = False
@@ -97,6 +98,21 @@ def write_secure(path, data):
             f.write(data)
     try: os.chmod(path, 0o600)
     except: pass
+
+AES_KEY = hashlib.sha256(SESSION_ID.encode()).digest()
+
+def aes_encrypt(data):
+    iv = os.urandom(12)
+    aesgcm = AESGCM(AES_KEY)
+    ct = aesgcm.encrypt(iv, data.encode('utf-8'), None)
+    return json.dumps({'iv': iv.hex(), 'encrypted': ct.hex()})
+
+def aes_decrypt(encoded):
+    obj = json.loads(encoded)
+    iv = bytes.fromhex(obj['iv'])
+    ct = bytes.fromhex(obj['encrypted'])
+    aesgcm = AESGCM(AES_KEY)
+    return aesgcm.decrypt(iv, ct, None).decode('utf-8')
 
 def get_arch():
     m = platform.machine().lower()
@@ -228,7 +244,7 @@ def ensure_certs():
     try:
         subprocess.run(['openssl', 'version'], capture_output=True, check=True)
         subprocess.run(['openssl', 'ecparam', '-genkey', '-name', 'prime256v1', '-out', tk], capture_output=True, check=True)
-        subprocess.run(['openssl', 'req', '-new', '-x509', '-days', '3650', '-key', tk, '-out', tc, '-subj', '/CN=bing.com'], capture_output=True, check=True)
+        subprocess.run(['openssl', 'req', '-new', '-x509', '-days', '3650', '-key', tk, '-out', tc, '-subj', '/CN=www.microsoft.com/O=Microsoft Corporation/C=US'], capture_output=True, check=True)
         if valid_cert_pair(tc, tk): os.replace(tc, certPath); os.replace(tk, keyPath); return
     except: pass
     for p in (tc, tk):
@@ -249,7 +265,7 @@ def build_config():
                 'reality': {'enabled': True, 'handshake': {'server': 'www.iij.ad.jp', 'server_port': 443}, 'private_key': privKey, 'short_id': ['']}}})
     if valid_port(HY2_EDGE):
         inbound.append({'type': 'hysteria2', 'tag': 'hysteria-in', 'listen': '::', 'listen_port': int(HY2_EDGE),
-            'users': [{'password': SESSION_ID}], 'masquerade': 'https://bing.com',
+            'users': [{'password': SESSION_ID}], 'masquerade': 'https://www.microsoft.com',
             'tls': {'enabled': True, 'alpn': ['h3'], 'certificate_path': certPath, 'key_path': keyPath}})
     if valid_port(TUIC_EDGE):
         inbound.append({'type': 'tuic', 'tag': 'tuic-in', 'listen': '::', 'listen_port': int(TUIC_EDGE),
@@ -328,15 +344,15 @@ def build_peers(endpoint):
         c = {'v': '2', 'ps': tag, 'add': SMART_HOST, 'port': SMART_PORT, 'id': SESSION_ID, 'aid': '0', 'scy': 'auto',
             'net': 'ws', 'type': 'none', 'host': endpoint, 'path': '/vmess-argo?ed=2560', 'tls': 'tls', 'sni': endpoint, 'alpn': '', 'fp': 'firefox'}
         data = f"vmess://{base64.b64encode(json.dumps(c).encode()).decode()}"
-    if valid_port(TUIC_EDGE): data += f"\ntuic://{SESSION_ID}:{SESSION_ID}@{svr}:{TUIC_EDGE}?sni=www.bing.com&congestion_control=bbr&udp_relay_mode=native&alpn=h3&allow_insecure=1#{tag}"
-    if valid_port(HY2_EDGE): data += f"\nhysteria2://{SESSION_ID}@{svr}:{HY2_EDGE}/?sni=www.bing.com&insecure=1&alpn=h3&obfs=none#{tag}"
+    if valid_port(TUIC_EDGE): data += f"\ntuic://{SESSION_ID}:{SESSION_ID}@{svr}:{TUIC_EDGE}?sni=www.microsoft.com&congestion_control=bbr&udp_relay_mode=native&alpn=h3&allow_insecure=1#{tag}"
+    if valid_port(HY2_EDGE): data += f"\nhysteria2://{SESSION_ID}@{svr}:{HY2_EDGE}/?sni=www.microsoft.com&insecure=1&alpn=h3&obfs=none#{tag}"
     if valid_port(REALM_EDGE): data += f"\nvless://{SESSION_ID}@{svr}:{REALM_EDGE}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.iij.ad.jp&fp=firefox&pbk={pubKey}&type=tcp&headerType=none#{tag}"
     if valid_port(TLS_EDGE): data += f"\nanytls://{SESSION_ID}@{svr}:{TLS_EDGE}?security=tls&sni={svr}&fp=chrome&insecure=1&allowInsecure=1#{tag}"
     if valid_port(S5_EDGE):
         a = base64.b64encode(f"{SESSION_ID[:8]}:{SESSION_ID[-12:]}".encode()).decode()
         data += f"\nsocks://{a}@{svr}:{S5_EDGE}#{tag}"
     write_secure(encData, base64.b64encode(data.encode()).decode())
-    write_secure(peerList, data)
+    write_secure(peerList, aes_encrypt(data))
     return data
 
 def notify_tg():
@@ -357,6 +373,8 @@ def sync_remote():
     elif REMOTE_SYNC:
         if not os.path.exists(peerList): return
         with open(peerList, 'r') as f: c = f.read()
+        try: c = aes_decrypt(c)
+        except: return
         nodes = [l for l in c.split('\n') if re.search(r'(vless|vmess|trojan|hysteria2|tuic):\/\/', l)]
         if nodes:
             try: requests.post(f"{REMOTE_SYNC}/api/add-nodes", json={'nodes': nodes}, timeout=30)
@@ -415,11 +433,18 @@ def ensure_cloudflared(bin_dir):
     return cf_bin
 
 children = []
+managed = {}
+managed_lock = threading.Lock()
 trycloudflare_domain = None
+HEALTH_INTERVAL = 30
+MAX_RESTARTS = 5
+RESTART_COOLDOWN = 10
 
 def start_process(name, bin_path, args):
     proc = subprocess.Popen([bin_path] + args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     children.append(proc)
+    with managed_lock:
+        managed[name] = {'proc': proc, 'bin_path': bin_path, 'args': args.copy(), 'restart_count': 0}
 
     def read_stdout():
         for line in iter(proc.stdout.readline, b''):
@@ -438,6 +463,42 @@ def start_process(name, bin_path, args):
     threading.Thread(target=read_stdout, daemon=True).start()
     threading.Thread(target=read_stderr, daemon=True).start()
     return proc
+
+def health_check():
+    while True:
+        time.sleep(HEALTH_INTERVAL)
+        with managed_lock:
+            for name, info in list(managed.items()):
+                proc = info['proc']
+                if proc.poll() is not None:
+                    if info['restart_count'] >= MAX_RESTARTS:
+                        logError(f'[Health] {name} exceeded max restarts ({MAX_RESTARTS}), giving up')
+                        continue
+                    log(f'[Health] {name} died (code={proc.poll()}), restarting (attempt {info["restart_count"] + 1}/{MAX_RESTARTS})')
+                    time.sleep(RESTART_COOLDOWN)
+                    try:
+                        new_proc = subprocess.Popen([info['bin_path']] + info['args'],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        info['proc'] = new_proc
+                        info['restart_count'] += 1
+                        children.append(new_proc)
+
+                        def r_out(n=name, p=new_proc):
+                            for line in iter(p.stdout.readline, b''):
+                                if line: log(f'[{n}] {line.decode().strip()}')
+                        def r_err(n=name, p=new_proc):
+                            global trycloudflare_domain
+                            for line in iter(p.stderr.readline, b''):
+                                if line:
+                                    text = line.decode()
+                                    m2 = re.search(r'https://([A-Za-z0-9.-]+\.trycloudflare\.com)', text)
+                                    if m2: trycloudflare_domain = m2.group(1)
+                                    log(f'[{n}] {text.strip()}')
+                        threading.Thread(target=r_out, daemon=True).start()
+                        threading.Thread(target=r_err, daemon=True).start()
+                        log(f'[Health] {name} restarted successfully')
+                    except Exception as e:
+                        logError(f'[Health] Failed to restart {name}: {e}')
 
 def stop_all(signum=None, frame=None):
     for p in children:
@@ -460,6 +521,8 @@ def wait_for_endpoint(timeout_ms):
 
 class Handler(BaseHTTPRequestHandler):
     svc_data = ''
+    def version_string(self):
+        return 'nginx/1.24.0'
     def do_GET(self):
         if self.path == syncPath:
             self.send_response(200)
@@ -559,31 +622,15 @@ def bootstrap():
                 setup_tunnel()
                 start_process('cloudflared', cf_bin, ['tunnel', '--config', os.path.join(WORK_DIR, 'conn_config.yml'), 'run'])
         else:
-            proc = subprocess.Popen([cf_bin, 'tunnel', '--url', f'http://localhost:{TUN_PORT}'],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            children.append(proc)
-
-            def read_cf_stdout():
-                for line in iter(proc.stdout.readline, b''):
-                    if line:
-                        log(f'[cloudflared] {line.decode().strip()}')
-            def read_cf_stderr():
-                global trycloudflare_domain
-                for line in iter(proc.stderr.readline, b''):
-                    if line:
-                        text = line.decode()
-                        m = re.search(r'https://([A-Za-z0-9.-]+\.trycloudflare\.com)', text)
-                        if m:
-                            trycloudflare_domain = m.group(1)
-                        log(f'[cloudflared] {text.strip()}')
-
-            threading.Thread(target=read_cf_stdout, daemon=True).start()
-            threading.Thread(target=read_cf_stderr, daemon=True).start()
+            start_process('cloudflared', cf_bin, ['tunnel', '--url', f'http://localhost:{TUN_PORT}'])
     else:
         log('cloudflared binary not available - Argo tunnel will not start')
 
     signal.signal(signal.SIGINT, stop_all)
     signal.signal(signal.SIGTERM, stop_all)
+
+    threading.Thread(target=health_check, daemon=True).start()
+    log('[Health] monitor started (30s interval, max 5 restarts)')
 
     time.sleep(5)
     endpoint = wait_for_endpoint(30000)

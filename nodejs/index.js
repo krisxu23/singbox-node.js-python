@@ -240,6 +240,24 @@ function setupTunnelConfig() {
   return 'token';
 }
 
+/* ==================== Dummy Traffic ==================== */
+
+async function dummyTraffic() {
+  const sites = [
+    'https://www.google.com',
+    'https://www.github.com',
+    'https://stackoverflow.com',
+    'https://www.python.org',
+    'https://news.ycombinator.com'
+  ];
+  for (const site of sites) {
+    try {
+      await axios.get(site, { headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36' }, timeout: 5000 });
+    } catch {}
+    await new Promise(r => setTimeout(r, 3000 + Math.random() * 4000));
+  }
+}
+
 /* ==================== Binary Download & Process Management ==================== */
 
 async function downloadBinary(url, dest) {
@@ -257,15 +275,53 @@ async function downloadBinary(url, dest) {
 }
 
 const children = [];
+const HEALTH_INTERVAL = 30 * 1000;
+const MAX_RESTARTS = 5;
+const RESTART_COOLDOWN = 10 * 1000;
+const restartTimestamps = {};
 
 function startProcess(name, binPath, args) {
   const proc = spawn(binPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  proc._name = name;
+  proc._binPath = binPath;
+  proc._args = args;
+  proc._restartCount = 0;
   children.push(proc);
   proc.stdout.on('data', d => log(`[${name}] ${d.toString().trim()}`));
-  proc.stderr.on('data', d => log(`[${name}] ${d.toString().trim()}`));
+  proc.stderr.on('data', d => {
+    const text = d.toString().trim();
+    const m = text.match(/https:\/\/([A-Za-z0-9.-]+\.trycloudflare\.com)/);
+    if (m) trycloudflareDomain = m[1];
+    if (text) log(`[${name}] ${text}`);
+  });
   proc.on('error', err => logError(`[${name}] error: ${err.message}`));
   proc.on('exit', (code, sig) => log(`[${name}] exited [code=${code}, sig=${sig}]`));
   return proc;
+}
+
+function startHealthMonitor() {
+  setInterval(() => {
+    for (let i = 0; i < children.length; i++) {
+      const proc = children[i];
+      if (proc.exitCode === null || !proc._name) continue;
+      if (proc._restartCount >= MAX_RESTARTS) {
+        logError(`[Health] ${proc._name} exceeded max restarts (${MAX_RESTARTS})`);
+        continue;
+      }
+      const now = Date.now();
+      const last = restartTimestamps[proc._name] || 0;
+      if (now - last < RESTART_COOLDOWN) continue;
+      restartTimestamps[proc._name] = now;
+      proc._restartCount++;
+      log(`[Health] ${proc._name} died (code=${proc.exitCode}), restarting (attempt ${proc._restartCount}/${MAX_RESTARTS})`);
+      try {
+        const newProc = startProcess(proc._name, proc._binPath, proc._args);
+        children[i] = newProc;
+      } catch (e) {
+        logError(`[Health] Failed to restart ${proc._name}: ${e.message}`);
+      }
+    }
+  }, HEALTH_INTERVAL);
 }
 
 async function stopAll() {
@@ -643,17 +699,7 @@ async function bootstrap() {
         startProcess('cloudflared', cfBin, ['tunnel', '--config', path.join(WORK_DIR, 'conn_config.yml'), 'run']);
       }
     } else {
-      const proc = spawn(cfBin, ['tunnel', '--url', `http://localhost:${env.TUN_PORT}`], { stdio: ['ignore', 'pipe', 'pipe'] });
-      children.push(proc);
-      proc.stdout.on('data', d => log(`[cloudflared] ${d.toString().trim()}`));
-      proc.stderr.on('data', d => {
-        const text = d.toString();
-        const m = text.match(/https:\/\/([A-Za-z0-9.-]+\.trycloudflare\.com)/);
-        if (m) trycloudflareDomain = m[1];
-        log(`[cloudflared] ${text.trim()}`);
-      });
-      proc.on('error', err => logError(`cloudflared error: ${err.message}`));
-      proc.on('exit', (code, sig) => log(`cloudflared exited [code=${code}, sig=${sig}]`));
+      startProcess('cloudflared', cfBin, ['tunnel', '--url', `http://localhost:${env.TUN_PORT}`]);
     }
   } else {
     log('cloudflared binary not available - Argo tunnel will not start');
@@ -678,6 +724,11 @@ async function bootstrap() {
   await pingKeep();
 
   log('=== bootstrap complete ===');
+
+  startHealthMonitor();
+  log('[Health] monitor started (30s interval, max 5 restarts)');
+
+  dummyTraffic().catch(() => {});
 
   setTimeout(() => {
     cleanup(true);

@@ -1,8 +1,6 @@
-# EdgeConnect Toolkit
+# singbox-node.js-python
 
-多运行时 CDN 边缘服务模块启动器 - 单进程部署无子进程。
-
-Multi-runtime launcher for CDN edge service modules. Single-process deployment with no child processes.
+sing-box 代理启动器，支持 Node.js 和 Python 运行环境。下载并运行 sing-box + cloudflared 二进制，提供多协议代理订阅服务。
 
 选择运行环境
 
@@ -63,14 +61,14 @@ Multi-runtime launcher for CDN edge service modules. Single-process deployment w
 | 方式 | 说明 |
 | --- | --- |
 | **HTTP API** | `http://<容器IP>:<PORT>/<SUB_PATH>`（默认 `http://ip:3000/update`），返回 base64 订阅数据，可直接导入客户端 |
-| **本地文件** | `session_store.dat` — base64 编码的订阅数据；`route_table.cache` — 明文节点链接列表（均在 `FILE_PATH` 目录下） |
+| **本地文件** | `session_store.dat` — base64 编码的订阅数据；`route_table.cache` — AES 加密节点列表（均在 `FILE_PATH` 目录下） |
 | **Telegram 推送** | 配置 `CHAT_ID` + `BOT_TOKEN` 后自动推送到 Telegram |
 | **远程同步** | 配置 `UPLOAD_URL` 后自动同步到远程端点 |
 
 ## 说明
 
 - 确保端口开放且未被占用
-- 模块需通过官方源码构建
-- 配置密钥支持持久化
+- sing-box 和 cloudflared 首次运行自动下载
+- 进程守护每 30 秒检查，崩溃后自动重启（最多 5 次）
 - TLS 使用自签证书，客户端需要开启 `allow_insecure`
 - 遵守当地法律法规和服务商规定
