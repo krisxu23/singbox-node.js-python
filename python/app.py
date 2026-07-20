@@ -122,10 +122,10 @@ ARCH = get_arch()
 
 def valid_port(p):
     try:
-        if p is None or p == '': return False
         n = int(p)
         return 1 <= n <= 65535
-    except (ValueError, TypeError): return False
+    except (ValueError, TypeError):
+        return False
 
 def sha256_file(fp):
     h = hashlib.sha256()
@@ -150,7 +150,7 @@ def purge_old():
         except: pass
 
 def cleanup(keep_data=False):
-    keep = set(['node_identity.key', 'tls.crt', 'tls.key'])
+    keep = set(['node_identity.key', 'tls.crt', 'tls.key', 'app.log', 'config.json', 'bin'])
     if keep_data: keep.add('session_store.dat')
     if os.path.exists(WORK_DIR):
         try:
@@ -246,18 +246,18 @@ def ensure_certs():
         subprocess.run(['openssl', 'ecparam', '-genkey', '-name', 'prime256v1', '-out', tk], capture_output=True, check=True)
         subprocess.run(['openssl', 'req', '-new', '-x509', '-days', '3650', '-key', tk, '-out', tc, '-subj', '/CN=www.microsoft.com/O=Microsoft Corporation/C=US'], capture_output=True, check=True)
         if valid_cert_pair(tc, tk): os.replace(tc, certPath); os.replace(tk, keyPath); return
-    except: pass
-    for p in (tc, tk):
-        try:
-            if os.path.exists(p): os.unlink(p)
-        except: pass
-    logError('openssl not available - TLS cert generation failed')
-    sys.exit(1)
+    except:
+        for p in (tc, tk):
+            try:
+                if os.path.exists(p): os.unlink(p)
+            except: pass
+        logError('openssl not available - TLS cert generation failed')
+        sys.exit(1)
 
 def build_config():
     inbound = []
     inbound.append({'type': 'vmess', 'tag': 'vmess-ws-in', 'listen': '::', 'listen_port': TUN_PORT,
-        'users': [{'uuid': SESSION_ID}], 'transport': {'type': 'ws', 'path': '/vmess-argo', 'early_data_header_name': 'Sec-WebSocket-Protocol'}})
+        'users': [{'uuid': SESSION_ID, 'alterId': 0}], 'transport': {'type': 'ws', 'path': '/vmess-argo', 'max_early_data': 2560, 'early_data_header_name': 'Sec-WebSocket-Protocol'}})
     if valid_port(REALM_EDGE):
         inbound.append({'type': 'vless', 'tag': 'vless-reality', 'listen': '::', 'listen_port': int(REALM_EDGE),
             'users': [{'uuid': SESSION_ID, 'flow': 'xtls-rprx-vision'}],
@@ -266,10 +266,10 @@ def build_config():
     if valid_port(HY2_EDGE):
         inbound.append({'type': 'hysteria2', 'tag': 'hysteria-in', 'listen': '::', 'listen_port': int(HY2_EDGE),
             'users': [{'password': SESSION_ID}], 'masquerade': 'https://www.microsoft.com',
-            'tls': {'enabled': True, 'alpn': ['h3'], 'certificate_path': certPath, 'key_path': keyPath}})
+            'tls': {'enabled': True, 'alpn': ['h3'], 'min_version': '1.3', 'max_version': '1.3', 'certificate_path': certPath, 'key_path': keyPath}})
     if valid_port(TUIC_EDGE):
         inbound.append({'type': 'tuic', 'tag': 'tuic-in', 'listen': '::', 'listen_port': int(TUIC_EDGE),
-            'users': [{'uuid': SESSION_ID, 'password': SESSION_ID}], 'congestion_control': 'bbr',
+            'users': [{'uuid': SESSION_ID, 'password': SESSION_ID}], 'congestion_control': 'bbr', 'zero_rtt_handshake': False,
             'tls': {'enabled': True, 'alpn': ['h3'], 'certificate_path': certPath, 'key_path': keyPath}})
     if valid_port(S5_EDGE):
         inbound.append({'type': 'socks', 'tag': 's5-in', 'listen': '::', 'listen_port': int(S5_EDGE),
@@ -297,7 +297,8 @@ def build_config():
         rules.append({'tag': 'youtube', 'type': 'remote', 'format': 'binary',
             'url': 'https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/youtube.srs'})
         wg.append('youtube')
-    return {'log': {'disabled': True, 'level': 'error', 'timestamp': True},
+    return {'log': {'level': 'error', 'timestamp': True},
+        'ntp': {'enabled': True, 'server': 'time.apple.com', 'server_port': 123, 'interval': '60m'},
         'inbounds': inbound, 'endpoints': ep, 'outbounds': [{'type': 'direct', 'tag': 'direct'}],
         'route': {'rule_set': rules,
             'rules': [{'rule_set': wg, 'outbound': 'wireguard-out'}], 'final': 'direct'}}
@@ -385,14 +386,6 @@ def ping_keep():
     try:
         requests.post('https://keep.gvrander.eu.org/add-url', json={'url': PUBLIC_URL}, timeout=30)
     except: pass
-
-def dummy_traffic():
-    sites = ['https://www.google.com', 'https://www.github.com', 'https://stackoverflow.com', 'https://www.python.org', 'https://news.ycombinator.com']
-    for site in sites:
-        try:
-            requests.get(site, headers={'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'}, timeout=5)
-        except: pass
-        time.sleep(3 + random.random() * 4)
 
 def download_binary(url, dest):
     os.makedirs(os.path.dirname(dest), exist_ok=True)
@@ -646,8 +639,6 @@ def bootstrap():
     sync_remote()
     ping_keep()
     log('=== bootstrap complete ===')
-
-    threading.Thread(target=dummy_traffic, daemon=True).start()
 
     def delayed():
         time.sleep(45)

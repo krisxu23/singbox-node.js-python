@@ -10,7 +10,10 @@ const axios = require('axios');
 
 try { require('dotenv').config(); } catch {}
 
-const LOG_FILE = path.join(process.cwd(), 'debug.log');
+function getLogFile() {
+  return path.join(process.cwd(), process.env.FILE_PATH || '.config', 'app.log');
+}
+const LOG_FILE = getLogFile();
 function log(msg) {
   const line = `[${new Date().toISOString()}] ${msg}`;
   console.log(line);
@@ -124,14 +127,8 @@ function writeSecure(filePath, data) {
 }
 
 function validPort(port) {
-  try {
-    if (port === null || port === undefined || port === '') return false;
-    if (typeof port === 'string' && port.trim() === '') return false;
-    const n = parseInt(port);
-    if (isNaN(n)) return false;
-    if (n < 1 || n > 65535) return false;
-    return true;
-  } catch { return false; }
+  const n = parseInt(port);
+  return !isNaN(n) && n >= 1 && n <= 65535;
 }
 
 function genRandStr(len) {
@@ -147,7 +144,7 @@ function purgeOld() {
 }
 
 function cleanup(keepData) {
-  const keep = new Set(['node_identity.key', 'tls.crt', 'tls.key']);
+  const keep = new Set(['node_identity.key', 'tls.crt', 'tls.key', 'app.log', 'config.json', 'bin']);
   if (keepData) keep.add('session_store.dat');
   if (!fs.existsSync(WORK_DIR)) return;
   try {
@@ -240,24 +237,6 @@ function setupTunnelConfig() {
   return 'token';
 }
 
-/* ==================== Dummy Traffic ==================== */
-
-async function dummyTraffic() {
-  const sites = [
-    'https://www.google.com',
-    'https://www.github.com',
-    'https://stackoverflow.com',
-    'https://www.python.org',
-    'https://news.ycombinator.com'
-  ];
-  for (const site of sites) {
-    try {
-      await axios.get(site, { headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36' }, timeout: 5000 });
-    } catch {}
-    await new Promise(r => setTimeout(r, 3000 + Math.random() * 4000));
-  }
-}
-
 /* ==================== Binary Download & Process Management ==================== */
 
 async function downloadBinary(url, dest) {
@@ -303,7 +282,10 @@ function startHealthMonitor() {
   setInterval(() => {
     for (let i = 0; i < children.length; i++) {
       const proc = children[i];
-      if (proc.exitCode === null || !proc._name) continue;
+      if (!proc || !proc._name) continue;
+      // poll() returns null if still running, exit code if exited
+      const exitCode = proc.exitCode !== null ? proc.exitCode : (proc.killed ? -1 : null);
+      if (exitCode === null) continue;
       if (proc._restartCount >= MAX_RESTARTS) {
         logError(`[Health] ${proc._name} exceeded max restarts (${MAX_RESTARTS})`);
         continue;
@@ -313,7 +295,7 @@ function startHealthMonitor() {
       if (now - last < RESTART_COOLDOWN) continue;
       restartTimestamps[proc._name] = now;
       proc._restartCount++;
-      log(`[Health] ${proc._name} died (code=${proc.exitCode}), restarting (attempt ${proc._restartCount}/${MAX_RESTARTS})`);
+      log(`[Health] ${proc._name} died (code=${exitCode}), restarting (attempt ${proc._restartCount}/${MAX_RESTARTS})`);
       try {
         const newProc = startProcess(proc._name, proc._binPath, proc._args);
         children[i] = newProc;
@@ -355,8 +337,8 @@ function buildProxyConfig() {
 
   inbound.push({
     type: 'vmess', tag: 'vmess-ws-in', listen: '::', listen_port: env.TUN_PORT,
-    users: [{ uuid: env.SESSION_ID }],
-    transport: { type: 'ws', path: '/vmess-argo', early_data_header_name: 'Sec-WebSocket-Protocol' }
+    users: [{ uuid: env.SESSION_ID, alterId: 0 }],
+    transport: { type: 'ws', path: '/vmess-argo', max_early_data: 2560, early_data_header_name: 'Sec-WebSocket-Protocol' }
   });
 
   if (validPort(env.REALM_EDGE)) {
@@ -374,14 +356,14 @@ function buildProxyConfig() {
     inbound.push({
       type: 'hysteria2', tag: 'hysteria-in', listen: '::', listen_port: parseInt(env.HY2_EDGE),
       users: [{ password: env.SESSION_ID }], masquerade: 'https://www.microsoft.com',
-      tls: { enabled: true, alpn: ['h3'], certificate_path: certPath, key_path: keyPath }
+      tls: { enabled: true, alpn: ['h3'], min_version: '1.3', max_version: '1.3', certificate_path: certPath, key_path: keyPath }
     });
   }
 
   if (validPort(env.TUIC_EDGE)) {
     inbound.push({
       type: 'tuic', tag: 'tuic-in', listen: '::', listen_port: parseInt(env.TUIC_EDGE),
-      users: [{ uuid: env.SESSION_ID, password: env.SESSION_ID }], congestion_control: 'bbr',
+      users: [{ uuid: env.SESSION_ID, password: env.SESSION_ID }], congestion_control: 'bbr', zero_rtt_handshake: false,
       tls: { enabled: true, alpn: ['h3'], certificate_path: certPath, key_path: keyPath }
     });
   }
@@ -432,7 +414,8 @@ function buildProxyConfig() {
   }
 
   return {
-    log: { disabled: true, level: 'error', timestamp: true },
+    log: { level: 'error', timestamp: true },
+    ntp: { enabled: true, server: 'time.apple.com', server_port: 123, interval: '60m' },
     inbounds: inbound,
     endpoints: ep,
     outbounds: [{ type: 'direct', tag: 'direct' }],
@@ -727,8 +710,6 @@ async function bootstrap() {
 
   startHealthMonitor();
   log('[Health] monitor started (30s interval, max 5 restarts)');
-
-  dummyTraffic().catch(() => {});
 
   setTimeout(() => {
     cleanup(true);
