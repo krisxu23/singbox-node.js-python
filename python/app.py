@@ -221,8 +221,8 @@ def load_keys():
         encoding=serialization.Encoding.Raw,
         format=serialization.PublicFormat.Raw
     )
-    privKey = base64.urlsafe_b64encode(priv_bytes).decode().rstrip('=')
-    pubKey = base64.urlsafe_b64encode(pub_bytes).decode().rstrip('=')
+    privKey = base64.b64encode(priv_bytes).decode().rstrip('=')
+    pubKey = base64.b64encode(pub_bytes).decode().rstrip('=')
     write_keys(privKey, pubKey)
 
 def valid_cert_pair(cert, key):
@@ -425,90 +425,63 @@ def ensure_cloudflared(bin_dir):
     log('cloudflared binary ready')
     return cf_bin
 
-children = []
-managed = {}
-managed_lock = threading.Lock()
+processes = {}
+cf_domain_lock = threading.Lock()
 trycloudflare_domain = None
-HEALTH_INTERVAL = 30
-MAX_RESTARTS = 5
-RESTART_COOLDOWN = 10
 
 def start_process(name, bin_path, args):
     proc = subprocess.Popen([bin_path] + args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    children.append(proc)
-    with managed_lock:
-        managed[name] = {'proc': proc, 'bin_path': bin_path, 'args': args.copy(), 'restart_count': 0}
+    with cf_domain_lock:
+        processes[name] = proc
 
     def read_stdout():
         for line in iter(proc.stdout.readline, b''):
             if line:
                 log(f'[{name}] {line.decode().strip()}')
     def read_stderr():
-        global trycloudflare_domain
         for line in iter(proc.stderr.readline, b''):
             if line:
                 text = line.decode()
                 m = re.search(r'https://([A-Za-z0-9.-]+\.trycloudflare\.com)', text)
                 if m:
-                    trycloudflare_domain = m.group(1)
+                    with cf_domain_lock:
+                        trycloudflare_domain = m.group(1)
                 log(f'[{name}] {text.strip()}')
 
     threading.Thread(target=read_stdout, daemon=True).start()
     threading.Thread(target=read_stderr, daemon=True).start()
     return proc
 
-def health_check():
+def run_with_watchdog(name, bin_path, args):
+    """Starts a process with self-healing watchdog. Restarts on non-zero exit, stops on clean exit (0)."""
     while True:
-        time.sleep(HEALTH_INTERVAL)
-        with managed_lock:
-            for name, info in list(managed.items()):
-                proc = info['proc']
-                if proc.poll() is not None:
-                    if info['restart_count'] >= MAX_RESTARTS:
-                        logError(f'[Health] {name} exceeded max restarts ({MAX_RESTARTS}), giving up')
-                        continue
-                    log(f'[Health] {name} died (code={proc.poll()}), restarting (attempt {info["restart_count"] + 1}/{MAX_RESTARTS})')
-                    time.sleep(RESTART_COOLDOWN)
-                    try:
-                        new_proc = subprocess.Popen([info['bin_path']] + info['args'],
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                        info['proc'] = new_proc
-                        info['restart_count'] += 1
-                        children.append(new_proc)
-
-                        def r_out(n=name, p=new_proc):
-                            for line in iter(p.stdout.readline, b''):
-                                if line: log(f'[{n}] {line.decode().strip()}')
-                        def r_err(n=name, p=new_proc):
-                            global trycloudflare_domain
-                            for line in iter(p.stderr.readline, b''):
-                                if line:
-                                    text = line.decode()
-                                    m2 = re.search(r'https://([A-Za-z0-9.-]+\.trycloudflare\.com)', text)
-                                    if m2: trycloudflare_domain = m2.group(1)
-                                    log(f'[{n}] {text.strip()}')
-                        threading.Thread(target=r_out, daemon=True).start()
-                        threading.Thread(target=r_err, daemon=True).start()
-                        log(f'[Health] {name} restarted successfully')
-                    except Exception as e:
-                        logError(f'[Health] Failed to restart {name}: {e}')
+        proc = start_process(name, bin_path, args)
+        exit_code = proc.wait()
+        if exit_code == 0:
+            log(f'[{name}] clean exit, watchdog stopping')
+            break
+        log(f'[{name}] died (exit={exit_code}), restarting in 3s...')
+        time.sleep(3)
 
 def stop_all(signum=None, frame=None):
-    for p in children:
-        try: p.terminate()
-        except: pass
+    with cf_domain_lock:
+        for name, proc in list(processes.items()):
+            try: proc.terminate()
+            except: pass
     time.sleep(2)
-    for p in children:
-        try: p.kill()
-        except: pass
+    with cf_domain_lock:
+        for name, proc in list(processes.items()):
+            try: proc.kill()
+            except: pass
     sys.exit(0)
 
 def wait_for_endpoint(timeout_ms):
     if TUN_DOMAIN: return TUN_DOMAIN
     deadline = time.time() + timeout_ms / 1000
     while time.time() < deadline:
-        if trycloudflare_domain:
-            return trycloudflare_domain
+        with cf_domain_lock:
+            if trycloudflare_domain:
+                return trycloudflare_domain
         time.sleep(1)
     return None
 
@@ -603,27 +576,24 @@ def bootstrap():
     log('sing-box config written')
 
     if sb_bin:
-        start_process('sing-box', sb_bin, ['run', '-c', cfgPath])
+        threading.Thread(target=run_with_watchdog, args=('sing-box', sb_bin, ['run', '-c', cfgPath]), daemon=True).start()
     else:
         logError('sing-box binary not available - proxy will not start')
 
     if cf_bin:
         if TUN_AUTH:
             if re.match(r'^[A-Z0-9a-z=]{120,250}$', TUN_AUTH):
-                start_process('cloudflared', cf_bin, ['tunnel', '--no-autoupdate', 'run', '--token', TUN_AUTH])
+                threading.Thread(target=run_with_watchdog, args=('cloudflared', cf_bin, ['tunnel', '--no-autoupdate', 'run', '--token', TUN_AUTH]), daemon=True).start()
             elif 'TunnelSecret' in TUN_AUTH:
                 setup_tunnel()
-                start_process('cloudflared', cf_bin, ['tunnel', '--config', os.path.join(WORK_DIR, 'conn_config.yml'), 'run'])
+                threading.Thread(target=run_with_watchdog, args=('cloudflared', cf_bin, ['tunnel', '--config', os.path.join(WORK_DIR, 'conn_config.yml'), 'run']), daemon=True).start()
         else:
-            start_process('cloudflared', cf_bin, ['tunnel', '--url', f'http://localhost:{TUN_PORT}'])
+            threading.Thread(target=run_with_watchdog, args=('cloudflared', cf_bin, ['tunnel', '--url', f'http://localhost:{TUN_PORT}']), daemon=True).start()
     else:
         log('cloudflared binary not available - Argo tunnel will not start')
 
     signal.signal(signal.SIGINT, stop_all)
     signal.signal(signal.SIGTERM, stop_all)
-
-    threading.Thread(target=health_check, daemon=True).start()
-    log('[Health] monitor started (30s interval, max 5 restarts)')
 
     time.sleep(5)
     endpoint = wait_for_endpoint(30000)

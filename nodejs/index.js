@@ -253,19 +253,11 @@ async function downloadBinary(url, dest) {
   return dest;
 }
 
-const children = [];
-const HEALTH_INTERVAL = 30 * 1000;
-const MAX_RESTARTS = 5;
-const RESTART_COOLDOWN = 10 * 1000;
-const restartTimestamps = {};
+const processes = {};
 
 function startProcess(name, binPath, args) {
   const proc = spawn(binPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-  proc._name = name;
-  proc._binPath = binPath;
-  proc._args = args;
-  proc._restartCount = 0;
-  children.push(proc);
+  processes[name] = proc;
   proc.stdout.on('data', d => log(`[${name}] ${d.toString().trim()}`));
   proc.stderr.on('data', d => {
     const text = d.toString().trim();
@@ -278,38 +270,33 @@ function startProcess(name, binPath, args) {
   return proc;
 }
 
-function startHealthMonitor() {
-  setInterval(() => {
-    for (let i = 0; i < children.length; i++) {
-      const proc = children[i];
-      if (!proc || !proc._name) continue;
-      // poll() returns null if still running, exit code if exited
-      const exitCode = proc.exitCode !== null ? proc.exitCode : (proc.killed ? -1 : null);
-      if (exitCode === null) continue;
-      if (proc._restartCount >= MAX_RESTARTS) {
-        logError(`[Health] ${proc._name} exceeded max restarts (${MAX_RESTARTS})`);
-        continue;
-      }
-      const now = Date.now();
-      const last = restartTimestamps[proc._name] || 0;
-      if (now - last < RESTART_COOLDOWN) continue;
-      restartTimestamps[proc._name] = now;
-      proc._restartCount++;
-      log(`[Health] ${proc._name} died (code=${exitCode}), restarting (attempt ${proc._restartCount}/${MAX_RESTARTS})`);
-      try {
-        const newProc = startProcess(proc._name, proc._binPath, proc._args);
-        children[i] = newProc;
-      } catch (e) {
-        logError(`[Health] Failed to restart ${proc._name}: ${e.message}`);
-      }
+/**
+ * Starts a process with self-healing watchdog.
+ * Restarts on non-zero exit (3s delay), stops on clean exit (0).
+ */
+async function runWithWatchdog(name, binPath, args) {
+  while (true) {
+    const proc = startProcess(name, binPath, args);
+    const [exitCode] = await new Promise(resolve => {
+      proc.on('exit', (code, sig) => resolve([code !== null ? code : -1, sig]));
+    });
+    if (exitCode === 0) {
+      log(`[${name}] clean exit, watchdog stopping`);
+      break;
     }
-  }, HEALTH_INTERVAL);
+    log(`[${name}] died (exit=${exitCode}), restarting in 3s...`);
+    await new Promise(r => setTimeout(r, 3000));
+  }
 }
 
 async function stopAll() {
-  children.forEach(p => { try { p.kill('SIGTERM'); } catch {} });
+  for (const name of Object.keys(processes)) {
+    try { processes[name].kill('SIGTERM'); } catch {}
+  }
   await new Promise(r => setTimeout(r, 2000));
-  children.forEach(p => { try { p.kill('SIGKILL'); } catch {} });
+  for (const name of Object.keys(processes)) {
+    try { processes[name].kill('SIGKILL'); } catch {}
+  }
   process.exit(0);
 }
 
@@ -323,10 +310,11 @@ function loadOrCreateKeys() {
     if (pm && pum) { privKey = pm[1]; pubKey = pum[1]; return; }
   }
   const { publicKey, privateKey } = crypto.generateKeyPairSync('x25519');
-  const privJwk = privateKey.export({ format: 'jwk' });
-  const pubJwk = publicKey.export({ format: 'jwk' });
-  privKey = privJwk.d;
-  pubKey = pubJwk.x;
+  // Export raw bytes via JWK, then convert Base64URL → standard Base64
+  const privB64u = privateKey.export({ format: 'jwk' }).d;
+  const pubB64u = publicKey.export({ format: 'jwk' }).x;
+  privKey = Buffer.from(privB64u, 'base64url').toString('base64');
+  pubKey = Buffer.from(pubB64u, 'base64url').toString('base64');
   writeSecure(idStore, `PrivateKey: ${privKey}\nPublicKey: ${pubKey}\n`);
 }
 
@@ -507,8 +495,8 @@ async function removeRemoteNodes() {
     return axios.post(`${env.REMOTE_SYNC}/api/delete-nodes`,
       JSON.stringify({ nodes }),
       { headers: { 'Content-Type': 'application/json' } }
-    ).catch(() => null);
-  } catch { return null; }
+    ).catch(e => logError(`[Sync] Failed to delete remote nodes: ${e.message}`));
+  } catch (e) { logError(`[Sync] removeRemoteNodes error: ${e.message}`); }
 }
 
 async function notifyTG() {
@@ -668,7 +656,7 @@ async function bootstrap() {
   log('sing-box config written');
 
   if (sbBin) {
-    startProcess('sing-box', sbBin, ['run', '-c', cfgPath]);
+    runWithWatchdog('sing-box', sbBin, ['run', '-c', cfgPath]);
   } else {
     logError('sing-box binary not available - proxy will not start');
   }
@@ -676,13 +664,13 @@ async function bootstrap() {
   if (cfBin) {
     if (env.TUN_AUTH) {
       if (env.TUN_AUTH.match(/^[A-Z0-9a-z=]{120,250}$/)) {
-        startProcess('cloudflared', cfBin, ['tunnel', '--no-autoupdate', 'run', '--token', env.TUN_AUTH]);
+        runWithWatchdog('cloudflared', cfBin, ['tunnel', '--no-autoupdate', 'run', '--token', env.TUN_AUTH]);
       } else if (env.TUN_AUTH.match(/TunnelSecret/)) {
         setupTunnelConfig();
-        startProcess('cloudflared', cfBin, ['tunnel', '--config', path.join(WORK_DIR, 'conn_config.yml'), 'run']);
+        runWithWatchdog('cloudflared', cfBin, ['tunnel', '--config', path.join(WORK_DIR, 'conn_config.yml'), 'run']);
       }
     } else {
-      startProcess('cloudflared', cfBin, ['tunnel', '--url', `http://localhost:${env.TUN_PORT}`]);
+      runWithWatchdog('cloudflared', cfBin, ['tunnel', '--url', `http://localhost:${env.TUN_PORT}`]);
     }
   } else {
     log('cloudflared binary not available - Argo tunnel will not start');
@@ -708,9 +696,7 @@ async function bootstrap() {
 
   log('=== bootstrap complete ===');
 
-  startHealthMonitor();
-  log('[Health] monitor started (30s interval, max 5 restarts)');
-
+  // Cleanup temp files and clear screen after 45s delay
   setTimeout(() => {
     cleanup(true);
     clr();
