@@ -54,7 +54,7 @@ const env = {
   TG_BOT:         process.env.BOT_TOKEN      || '',
   NO_TUN:         process.env.DISABLE_ARGO   || false,
   WG_PRIVATE_KEY: process.env.WG_PRIVATE_KEY || '',
-  SB_VERSION:     process.env.SB_VERSION     || '1.11.6'
+  SB_VERSION:     process.env.SB_VERSION     || '1.13.14'
 };
 
 const sensitiveKeys = [
