@@ -32,7 +32,7 @@ NODE_TAG       = os.environ.get('NAME', '')
 TG_CHAT        = os.environ.get('CHAT_ID', '')
 TG_BOT         = os.environ.get('BOT_TOKEN', '')
 NO_TUN         = os.environ.get('DISABLE_ARGO', 'false').lower() in ('true', 'yes')
-SB_VERSION     = os.environ.get('SB_VERSION', '1.11.6')
+SB_VERSION     = os.environ.get('SB_VERSION', '1.13.14')
 
 sensitive_keys = [
     'UPLOAD_URL','PROJECT_URL','AUTO_ACCESS','YT_WARPOUT','UUID',
